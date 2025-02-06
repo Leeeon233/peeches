@@ -1,0 +1,187 @@
+:root {
+  font-family: "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  font-size: 16px;
+  line-height: 24px;
+  font-weight: 400;
+
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-text-size-adjust: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: transparent !important;
+  overflow: hidden;
+}
+
+a {
+  font-weight: 500;
+  color: #646cff;
+  text-decoration: inherit;
+}
+
+a:hover {
+  color: #535bf2;
+}
+
+h1 {
+  text-align: center;
+}
+
+input,
+button {
+  border-radius: 8px;
+  border: 1px solid transparent;
+  padding: 0.6em 1.2em;
+  font-size: 1em;
+  font-weight: 500;
+  font-family: inherit;
+  color: #0f0f0f;
+  background-color: #ffffff;
+  transition: border-color 0.25s;
+  box-shadow: 0 2px 2px rgba(0, 0, 0, 0.2);
+}
+
+button {
+  cursor: pointer;
+}
+
+button:hover {
+  border-color: #396cd8;
+}
+button:active {
+  border-color: #396cd8;
+  background-color: #e8e8e8;
+}
+
+input,
+button {
+  outline: none;
+}
+
+#greet-input {
+  margin-right: 5px;
+}
+
+.translation-container {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 100vh;
+  background: transparent;
+  cursor: move;
+  user-select: none;
+  margin: 8px;
+  -webkit-user-select: none;
+}
+
+.text-display {
+  width: 100%;
+  /* padding: 2rem; */
+  /* max-width: 800px; */
+  background: transparent;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  transition: all 0.3s ease;
+  position: relative;
+  background: rgba(0, 0, 0, 0.1);
+  border-radius: 12px;
+}
+
+.text-display.show-hover-bg {
+  background: rgba(0, 0, 0, 0.3);
+  backdrop-filter: blur(8px);
+  border-radius: 12px;
+  margin: 0;
+  padding: 8px;
+}
+
+.original-text,
+.translated-text {
+  font-size: 24px;
+  line-height: 1.5;
+  padding: 0.5rem;
+  text-align: center;
+  background: transparent;
+  text-shadow: 0 2px 4px rgba(0, 0, 0, 0.5);
+  transition: all 0.3s ease;
+  opacity: 0.8;
+}
+
+.text-display.show-hover-bg .original-text,
+.text-display.show-hover-bg .translated-text {
+  opacity: 1;
+}
+
+.original-text {
+  color: #FFFFFF;
+  font-weight: 500;
+}
+
+.translated-text {
+  color: #00FFBB;
+  font-weight: 400;
+}
+
+/* Add some basic animations */
+/* .original-text,
+.translated-text {
+  transition: all 0.3s ease;
+} */
+
+.original-text:empty,
+.translated-text:empty {
+  opacity: 0.5;
+}
+
+.button-group {
+  position: absolute;
+  top: 0.5rem;
+  right: 1.5rem;
+  display: flex;
+  gap: 0.5rem;
+  opacity: 0;
+  transition: opacity 0.3s ease;
+  pointer-events: none;
+  z-index: 10;
+}
+
+.text-display.show-buttons .button-group {
+  opacity: 1;
+  pointer-events: all;
+}
+
+.button-group button {
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 50%;
+  background: rgba(0, 0, 0, 0.6);
+  border: none;
+  color: white;
+  cursor: pointer;
+  font-size: 16px;
+  transition: all 0.2s ease;
+}
+
+.button-group button:hover {
+  background: rgba(0, 0, 0, 0.8);
+  /* transform: scale(1.1); */
+}
+
+.button-group .pin-button.active {
+  background: rgba(0, 150, 255, 0.8);
+}
+
+.button-group .close-button:hover {
+  background: rgba(255, 0, 0, 0.8);
+}

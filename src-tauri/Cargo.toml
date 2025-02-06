@@ -1,0 +1,56 @@
+[package]
+name = "peeches"
+version = "0.1.0"
+description = "A Tauri App"
+authors = ["leon7hao"]
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[lib]
+# The `_lib` suffix may seem redundant but it is necessary
+# to make the lib name unique and wouldn't conflict with the bin name.
+# This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
+name = "peeches_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "s"
+panic = "abort"
+strip = true
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+cidre = { git = "https://github.com/yury/cidre.git", branch = "main", default-features = false, features = [
+    "sc",
+    "dispatch",
+    "av",
+    "cv",
+    "async",
+    "macos_15_0",
+] }
+tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
+tauri-plugin-shell = "2"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+tokio = { version = "1", features = ["full"] }
+whisper-rs = { version = "0.13.2", features = ["metal"] }
+anyhow = "1.0"
+ringbuffer = "0.15.0"
+# vad-rs = "0.1.5"
+samplerate = "0.2.4"
+futures = "^0.3"
+candle-core = { version = "0.8.2", features = ["metal"] }
+candle-transformers = { version = "0.8.2", features = ["metal"] }
+candle-nn = { version = "0.8.2", features = ["metal"] }
+tokenizers = "0.21"
+tauri-plugin-log = "2"
+
+
+# https://github.com/tazz4843/whisper-rs/blob/master/BUILDING.md
+[target.aarch64-apple-darwin]
+rustflags = "-lc++ -l framework=Accelerate"
