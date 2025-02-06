@@ -3,7 +3,6 @@
 use ringbuffer::{AllocRingBuffer, RingBuffer};
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
-// use vad_rs::{Normalizer, Vad, VadStatus};
 use whisper_rs::{
     FullParams, SamplingStrategy, WhisperContext, WhisperContextParameters, WhisperState,
 };
