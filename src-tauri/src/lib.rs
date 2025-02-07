@@ -23,7 +23,8 @@ mod whisper;
 #[derive(Serialize, Deserialize, Clone)]
 struct ModelInfo {
     name: String,
-    fileName: String,
+    #[serde(rename = "fileName")]
+    file_name: String,
     status: String,
 }
 
@@ -83,8 +84,10 @@ fn close_app(app: AppHandle) -> Result<(), String> {
 
 #[derive(Serialize, Clone)]
 struct Event {
-    originalText: String,
-    translatedText: String,
+    #[serde(rename = "originalText")]
+    original_text: String,
+    #[serde(rename = "translatedText")]
+    translated_text: String,
 }
 
 #[derive(Serialize, Clone)]
@@ -141,8 +144,8 @@ async fn start_recording(
                         app.emit(
                             "event",
                             Event {
-                                originalText: text,
-                                translatedText: translated_text,
+                                original_text: text,
+                                translated_text,
                             },
                         )
                         .unwrap();
@@ -330,17 +333,19 @@ pub fn run() {
             let models = store
                 .get("models")
                 .unwrap_or(serde_json::Value::Array(vec![]));
-            let models: HashMap<String, ModelInfo> =
+            let mut models: HashMap<String, ModelInfo> =
                 serde_json::from_value(models).unwrap_or_default();
 
             let whisper_model = {
                 if let Some(info) = models.get("ggml-base-q5_1.bin") {
                     if info.status == "completed" {
-                        let model_path = model_dir.join(&info.fileName);
+                        let model_path = model_dir.join(&info.file_name);
                         if model_path.exists() {
                             let whisper = Whisper::new(model_path.to_str().unwrap());
                             Some(whisper)
                         } else {
+                            models.remove("ggml-base-q5_1.bin");
+                            store.set("models", serde_json::to_value(&models).unwrap());
                             None
                         }
                     } else {
@@ -354,7 +359,7 @@ pub fn run() {
             let translator = {
                 if let Some(info) = models.get("opus-mt-en-zh.bin") {
                     if info.status == "completed" {
-                        let model_path = model_dir.join(&info.fileName);
+                        let model_path = model_dir.join(&info.file_name);
                         if model_path.exists() {
                             let (en_token, zh_token) = get_token_path(app.handle());
                             let translator = Translator::new(
@@ -364,6 +369,8 @@ pub fn run() {
                             )?;
                             Some(translator)
                         } else {
+                            models.remove("opus-mt-en-zh.bin");
+                            store.set("models", serde_json::to_value(&models).unwrap());
                             None
                         }
                     } else {

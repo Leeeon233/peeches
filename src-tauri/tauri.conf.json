@@ -29,7 +29,7 @@
     },
     "trayIcon": {
       "iconAsTemplate": false,
-      "iconPath": "./icons/icon.png",
+      "iconPath": "./icons/icon-template.png",      
       "id": "tray"
     }
   },
