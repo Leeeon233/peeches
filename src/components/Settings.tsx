@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { invoke } from '@tauri-apps/api/core';
 import { listen } from '@tauri-apps/api/event';
 import './Settings.css';
+import { Store } from '@tauri-apps/plugin-store';
 
 interface ModelInfo {
   name: string;
@@ -13,75 +14,98 @@ interface ModelInfo {
   error?: string;
 }
 
- function Settings() {
-  const [models, setModels] = useState<ModelInfo[]>([
-    {
-      name: '转录模型',
-      fileName: 'ggml-base-q5_1.bin',
-      description: 'whisper ggml base-q5_1',
-      status: 'idle',
-      progress: 0,
-      url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin',
-    },
-    {
-      name: '翻译模型',
-      fileName: 'opus-mt-en-zh.bin',
-      description: 'opus-mt-en-zh',
-      status: 'downloading',
-      progress: 100,
-      url: 'https://huggingface.co/Helsinki-NLP/opus-mt-en-zh/resolve/refs%2Fpr%2F26/model.safetensors',
-    },
-  ]);
+type ModelsRecord = Record<string, ModelInfo>;
+
+const defaultModels: ModelsRecord = {
+  'ggml-base-q5_1.bin': {
+    name: '转录模型',
+    fileName: 'ggml-base-q5_1.bin',
+    description: 'whisper ggml base-q5_1',
+    status: 'idle',
+    progress: 0,
+    url: 'https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-base-q5_1.bin',
+  },
+  'opus-mt-en-zh.bin': {
+    name: '翻译模型',
+    fileName: 'opus-mt-en-zh.bin',
+    description: 'opus-mt-en-zh',
+    status: 'idle',
+    progress: 0,
+    url: 'https://huggingface.co/Helsinki-NLP/opus-mt-en-zh/resolve/refs%2Fpr%2F26/model.safetensors',
+  },
+};
+
+function Settings() {
+  const [models, setModels] = useState<ModelsRecord>({});
 
   const listenDownloadProgress = async () => {
-     await listen('download-progress', async (event: any) => {
-      const { progress,index } = event.payload;
-      console.log("progress: ", progress, "index: ", index);
+    const store = await Store.load('models.dat');
+    await listen('download-progress', async (event: any) => {
+      const { progress, fileName } = event.payload;
+      console.log("progress: ", progress, "fileName: ", fileName);
       setModels(prev => {
-        const newModels = [...prev];
-        newModels[index] = { ...newModels[index], progress };
-        if (progress === 100) {
-          newModels[index] = { ...newModels[index], status: 'completed' };
-          
+        const newModels = { ...prev };
+        if (newModels[fileName]) {
+          newModels[fileName] = { ...newModels[fileName], progress };
+          if (progress === 100) {
+            newModels[fileName] = { ...newModels[fileName], status: 'completed' };
+            store.set('models', newModels);
+          }
         }
         return newModels;
-      })});
+      });
+    });
   }
 
   useEffect(() => {
-    listenDownloadProgress();
-  }, []);
-  
-  const handleDownload = async (index: number) => {
-    try {
-      setModels(prev => {
-        const newModels = [...prev];
-        newModels[index] = { ...newModels[index], status: 'downloading', progress: 0 };
-        return newModels;
+    let needUpdate = false;
+    Store.load('models.dat').then((store) => {
+      store.get<ModelsRecord>('models').then((value) => {
+        if (value) {
+          Object.values(value).forEach((model) => {
+            if (model.status !== 'completed') {
+              needUpdate = true;
+            }
+          });
+          if (needUpdate) {
+            listenDownloadProgress();
+          }
+          setModels(value);
+        } else {
+          setModels(defaultModels);
+          listenDownloadProgress();
+        }
       });
+    });
+  }, []);
+
+  const handleDownload = async (fileName: string) => {
+    try {
+      setModels(prev => ({
+        ...prev,
+        [fileName]: { ...prev[fileName], status: 'downloading', progress: 0, error: undefined }
+      }));
 
       // Start the download
-      await invoke('download_model', { url: models[index].url,  index, fileName: models[index].fileName });
+      await invoke('download_model', { url: models[fileName].url, fileName });
 
-      
     } catch (error) {
       console.error('Download error:', error);
-      setModels(prev => {
-        const newModels = [...prev];
-        newModels[index] = {
-          ...newModels[index],
+      setModels(prev => ({
+        ...prev,
+        [fileName]: {
+          ...prev[fileName],
           status: 'error',
           error: '下载失败，请重试',
-        };
-        return newModels;
-      });
+        }
+      }));
     }
   };
 
   return (
     <div className="settings-container">
-      {models.map((model, index) => (
-        <div key={index} className="model-item">
+      {Object.values(models).map((model) => (
+        <div key={model.fileName} className="model-item">
           <div className="model-info">
             <h3>{model.name}</h3>
             <p className="model-description">{model.description}</p>
@@ -91,20 +115,21 @@ interface ModelInfo {
             {(model.status === 'idle' || model.status === 'error') && (
               <button
                 className="download-button"
-                onClick={() => handleDownload(index)}
+                onClick={() => handleDownload(model.fileName)}
               >
                 下载
               </button>
             )}
             {model.status === 'downloading' && (
-                <div style={{width: '100%', display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center', justifyContent: 'center'}}> <div className="progress-container">
-                <div 
-                  className="progress-bar"
-                  style={{ width: `${model.progress}%` }}
-                ></div>
-               
-              </div> <span className="progress-text">{model.progress.toFixed(2)}%</span></div>
-             
+              <div style={{width: '100%', display: 'flex', flexDirection: 'column', gap: '4px', alignItems: 'center', justifyContent: 'center'}}>
+                <div className="progress-container">
+                  <div 
+                    className="progress-bar"
+                    style={{ width: `${model.progress}%` }}
+                  ></div>
+                </div>
+                <span className="progress-text">{model.progress.toFixed(2)}%</span>
+              </div>
             )}
             {model.status === 'completed' && (
               <div className="check-mark">✓</div>
@@ -114,6 +139,6 @@ interface ModelInfo {
       ))}
     </div>
   );
-} 
+}
 
 export default Settings;

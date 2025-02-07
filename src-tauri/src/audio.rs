@@ -54,6 +54,7 @@ impl OutputImpl for StreamOutput {
     }
 }
 
+#[derive(Debug, Clone)]
 pub struct AudioOutput {
     output: Arc<Mutex<Retained<StreamOutput>>>,
     pub sender: Sender<Option<Retained<cm::SampleBuf>>>,

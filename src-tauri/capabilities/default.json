@@ -3,7 +3,8 @@
   "identifier": "default",
   "description": "Capability for the main window",
   "windows": [
-    "main", "settings"
+    "main",
+    "settings"
   ],
   "permissions": [
     "core:default",
@@ -11,6 +12,7 @@
     "core:window:allow-start-dragging",
     "core:window:allow-set-ignore-cursor-events",
     "log:default",
+    "store:default",
     "store:default"
   ]
 }

@@ -1,19 +1,78 @@
-use std::fs;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::time::Instant;
+use std::{
+    fs,
+    sync::{Arc, Mutex},
+};
 
 use audio::AudioOutput;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use tauri::{
     menu::{Menu, MenuItem},
     AppHandle, Emitter, Manager, WebviewWindowBuilder,
 };
+use tauri_plugin_store::StoreExt as _;
 use translate::Translator;
 use whisper::Whisper;
 
 mod audio;
 mod translate;
 mod whisper;
+
+#[derive(Serialize, Deserialize, Clone)]
+struct ModelInfo {
+    name: String,
+    fileName: String,
+    status: String,
+}
+
+struct AppState {
+    whisper: Arc<Mutex<Option<Whisper>>>,
+    translator: Arc<Mutex<Option<Translator>>>,
+}
+
+impl AppState {
+    fn set_model(&self, app: &AppHandle, file_name: &str) -> Result<(), String> {
+        match file_name {
+            "ggml-base-q5_1.bin" => {
+                self.whisper
+                    .lock()
+                    .unwrap()
+                    .replace(Self::create_whisper(app, file_name)?);
+            }
+            "opus-mt-en-zh.bin" => {
+                self.translator
+                    .lock()
+                    .unwrap()
+                    .replace(Self::create_translator(app, file_name)?);
+            }
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    fn is_ready(&self) -> bool {
+        self.whisper.lock().unwrap().is_some() && self.translator.lock().unwrap().is_some()
+    }
+
+    fn create_whisper(app: &AppHandle, file_name: &str) -> Result<Whisper, String> {
+        let model_dir = model_dir(app)?;
+        let whisper = Whisper::new(model_dir.join(file_name).to_str().unwrap());
+        Ok(whisper)
+    }
+
+    fn create_translator(app: &AppHandle, file_name: &str) -> Result<Translator, String> {
+        let model_dir = model_dir(app)?;
+        let (en_token, zh_token) = get_token_path(app);
+        Translator::new(
+            model_dir.join(file_name).to_str().unwrap(),
+            en_token.to_str().unwrap(),
+            zh_token.to_str().unwrap(),
+        )
+        .map_err(|e| e.to_string())
+    }
+}
 
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 #[tauri::command]
@@ -30,7 +89,8 @@ struct Event {
 
 #[derive(Serialize, Clone)]
 pub struct DownloadProgress {
-    index: usize,
+    #[serde(rename = "fileName")]
+    file_name: String,
     progress: f32,
     total_size: u64,
     downloaded: u64,
@@ -40,52 +100,60 @@ pub struct DownloadProgress {
 async fn start_recording(
     app: AppHandle,
     output: tauri::State<'_, AudioOutput>,
-    whisper: tauri::State<'_, Whisper>,
-    translator: tauri::State<'_, Translator>,
-) -> Result<(), String> {
+    state: tauri::State<'_, AppState>,
+) -> Result<bool, String> {
     println!("start_recording");
+    if !state.is_ready() {
+        open_settings(app)?;
+        return Ok(false);
+    }
 
     let mut rx = output.sender.subscribe();
     // Use the current thread runtime
     output.start_recording();
-    while let Ok(sample_buf) = rx.recv().await {
-        if output.is_stopped() || sample_buf.is_none() {
-            break;
+    let output_clone = output.inner().clone();
+    let whisper = state.whisper.lock().unwrap().as_ref().unwrap().clone();
+    let translator = state.translator.lock().unwrap().as_ref().unwrap().clone();
+    tokio::spawn(async move {
+        while let Ok(sample_buf) = rx.recv().await {
+            if output_clone.is_stopped() || sample_buf.is_none() {
+                break;
+            }
+            let audio_buf_list = sample_buf.unwrap().audio_buf_list::<2>().unwrap();
+            let buffer_list = audio_buf_list.list();
+            let samples = unsafe {
+                let buffer = buffer_list.buffers[0];
+                std::slice::from_raw_parts(
+                    buffer.data as *const f32,
+                    buffer.data_bytes_size as usize / std::mem::size_of::<f32>(),
+                )
+            };
+            whisper.add_new_samples(samples, 48000, 1);
+            let whisper_clone = whisper.clone();
+            let translator_clone = translator.clone();
+            if whisper.can_transcribe() {
+                let app = app.clone();
+                std::thread::spawn(move || {
+                    if let Some(text) = whisper_clone.transcribe() {
+                        let start_time = Instant::now();
+                        println!("text: {}", text);
+                        let translated_text = translator_clone.translate(&text).unwrap();
+                        app.emit(
+                            "event",
+                            Event {
+                                originalText: text,
+                                translatedText: translated_text,
+                            },
+                        )
+                        .unwrap();
+                        let elapsed_time = start_time.elapsed();
+                        println!("transcribe_in_background time: {:?}", elapsed_time);
+                    }
+                });
+            }
         }
-        let audio_buf_list = sample_buf.unwrap().audio_buf_list::<2>().unwrap();
-        let buffer_list = audio_buf_list.list();
-        let samples = unsafe {
-            let buffer = buffer_list.buffers[0];
-            std::slice::from_raw_parts(
-                buffer.data as *const f32,
-                buffer.data_bytes_size as usize / std::mem::size_of::<f32>(),
-            )
-        };
-        whisper.add_new_samples(samples, 48000, 1);
-        if whisper.can_transcribe() {
-            let whisper = whisper.inner().clone();
-            let translator = translator.inner().clone();
-            let app = app.clone();
-            std::thread::spawn(move || {
-                if let Some(text) = whisper.transcribe() {
-                    let start_time = Instant::now();
-                    println!("text: {}", text);
-                    let translated_text = translator.translate(&text).unwrap();
-                    app.emit(
-                        "event",
-                        Event {
-                            originalText: text,
-                            translatedText: translated_text,
-                        },
-                    )
-                    .unwrap();
-                    let elapsed_time = start_time.elapsed();
-                    println!("transcribe_in_background time: {:?}", elapsed_time);
-                }
-            });
-        }
-    }
-    Ok(())
+    });
+    Ok(true)
 }
 
 #[tauri::command]
@@ -125,14 +193,11 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
 async fn download_model(
     app: AppHandle,
     url: String,
-    index: usize,
     file_name: String,
+    state: tauri::State<'_, AppState>,
 ) -> Result<(), String> {
-    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
-    let model_dir = app_dir.join("model");
-    fs::create_dir_all(&model_dir).map_err(|e| e.to_string())?;
-
-    let file_path = model_dir.join(file_name);
+    let model_dir = model_dir(&app)?;
+    let file_path = model_dir.join(&file_name);
 
     // Download the file
     let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
@@ -158,7 +223,7 @@ async fn download_model(
             app.emit(
                 "download-progress",
                 DownloadProgress {
-                    index,
+                    file_name: file_name.clone(),
                     progress,
                     total_size,
                     downloaded,
@@ -168,10 +233,11 @@ async fn download_model(
             last_update = now;
         }
     }
+    state.set_model(&app, &file_name)?;
     app.emit(
         "download-progress",
         DownloadProgress {
-            index,
+            file_name,
             progress: 100.0,
             total_size,
             downloaded,
@@ -182,9 +248,25 @@ async fn download_model(
     Ok(())
 }
 
+fn get_token_path(app: &AppHandle) -> (PathBuf, PathBuf) {
+    let resource_dir = app.path().resource_dir().unwrap();
+    let model_dir = resource_dir.join("model");
+    let en_token = model_dir.join("tokenizer-marian-base-en.json");
+    let zh_token = model_dir.join("tokenizer-marian-base-zh.json");
+    (en_token, zh_token)
+}
+
+fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let model_dir = app_dir.join("model");
+    fs::create_dir_all(&model_dir).map_err(|e| e.to_string())?;
+    Ok(model_dir)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_store::Builder::new().build())
         // .plugin(tauri_plugin_log::Builder::new().build())
         .setup(|app| {
             if let Some(tray_icon) = app.tray_by_id("tray") {
@@ -233,22 +315,70 @@ pub fn run() {
                         .unwrap();
                 }
             }
-            let resource_dir = app.path().resource_dir()?;
-            let model_dir = resource_dir.join("model");
-            let whisper_model = model_dir.join("ggml-base-q5_1.bin");
-            // let vad_model = model_dir.join("silero_vad.onnx");
-            let translate_model = model_dir.join("opus-mt-en-zh.safetensors");
-            let en_token = model_dir.join("tokenizer-marian-base-en.json");
-            let zh_token = model_dir.join("tokenizer-marian-base-zh.json");
-            let whisper = Whisper::new(whisper_model.to_str().unwrap());
-            let translator = Translator::new(
-                translate_model.to_str().unwrap(),
-                en_token.to_str().unwrap(),
-                zh_token.to_str().unwrap(),
-            )?;
 
-            app.manage(whisper);
-            app.manage(translator);
+            // let whisper = Whisper::new(whisper_model.to_str().unwrap());
+            // let translator = Translator::new(
+            //     translate_model.to_str().unwrap(),
+            //     en_token.to_str().unwrap(),
+            //     zh_token.to_str().unwrap(),
+            // )?;
+
+            let model_dir = model_dir(app.handle())?;
+
+            // Get model store state
+            let store = app.store("models.dat")?;
+            let models = store
+                .get("models")
+                .unwrap_or(serde_json::Value::Array(vec![]));
+            let models: HashMap<String, ModelInfo> =
+                serde_json::from_value(models).unwrap_or_default();
+
+            let whisper_model = {
+                if let Some(info) = models.get("ggml-base-q5_1.bin") {
+                    if info.status == "completed" {
+                        let model_path = model_dir.join(&info.fileName);
+                        if model_path.exists() {
+                            let whisper = Whisper::new(model_path.to_str().unwrap());
+                            Some(whisper)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+            let translator = {
+                if let Some(info) = models.get("opus-mt-en-zh.bin") {
+                    if info.status == "completed" {
+                        let model_path = model_dir.join(&info.fileName);
+                        if model_path.exists() {
+                            let (en_token, zh_token) = get_token_path(app.handle());
+                            let translator = Translator::new(
+                                model_path.to_str().unwrap(),
+                                en_token.to_str().unwrap(),
+                                zh_token.to_str().unwrap(),
+                            )?;
+                            Some(translator)
+                        } else {
+                            None
+                        }
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                }
+            };
+
+            app.manage(AppState {
+                whisper: Arc::new(Mutex::new(whisper_model)),
+                translator: Arc::new(Mutex::new(translator)),
+            });
+
             Ok(())
         })
         .manage(AudioOutput::new())

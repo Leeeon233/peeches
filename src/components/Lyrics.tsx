@@ -5,7 +5,7 @@ import {  Pause, Pin, PinOff, Play, Settings, X } from "lucide-react";
 
 type Event = {
   originalText: string;
-  translatedText?: string;
+  translatedText: string;
 };
 
 function Lyrics() {
@@ -38,12 +38,12 @@ function Lyrics() {
        invoke("stop_recording");
        setOriginalText("");
        setTranslatedText("");
+       setIsRecording(false);
     } else {
-       invoke("start_recording");
+       if (await invoke("start_recording")){
+        setIsRecording(true);
+       }
     }
-    setIsRecording(prev => {
-      return !prev;
-    });
   };
 
   const handleMouseEnter = () => {
