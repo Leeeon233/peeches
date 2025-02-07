@@ -1,10 +1,12 @@
+use std::fs;
+use std::path::PathBuf;
 use std::time::Instant;
 
 use audio::AudioOutput;
 use serde::Serialize;
 use tauri::{
     menu::{Menu, MenuItem},
-    AppHandle, Emitter, Manager,
+    AppHandle, Emitter, Manager, WebviewWindowBuilder,
 };
 use translate::Translator;
 use whisper::Whisper;
@@ -24,6 +26,14 @@ fn close_app(app: AppHandle) -> Result<(), String> {
 struct Event {
     originalText: String,
     translatedText: String,
+}
+
+#[derive(Serialize, Clone)]
+pub struct DownloadProgress {
+    index: usize,
+    progress: f32,
+    total_size: u64,
+    downloaded: u64,
 }
 
 #[tauri::command]
@@ -82,6 +92,93 @@ async fn start_recording(
 fn stop_recording(output: tauri::State<'_, AudioOutput>) -> Result<(), String> {
     println!("stop_recording");
     output.stop_recording();
+    Ok(())
+}
+
+#[tauri::command]
+fn open_settings(app: AppHandle) -> Result<(), String> {
+    // Check if settings window already exists and focus it
+    if let Some(settings_window) = app.get_webview_window("settings") {
+        settings_window.set_focus().map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        let settings = WebviewWindowBuilder::new(
+            &app,
+            "settings",
+            tauri::WebviewUrl::App("/#/settings".into()),
+        )
+        .hidden_title(true)
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .inner_size(400.0, 300.0)
+        .resizable(false)
+        .center()
+        .build();
+
+        match settings {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
+#[tauri::command]
+async fn download_model(
+    app: AppHandle,
+    url: String,
+    index: usize,
+    file_name: String,
+) -> Result<(), String> {
+    let app_dir = app.path().app_data_dir().map_err(|e| e.to_string())?;
+    let model_dir = app_dir.join("model");
+    fs::create_dir_all(&model_dir).map_err(|e| e.to_string())?;
+
+    let file_path = model_dir.join(file_name);
+
+    // Download the file
+    let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
+
+    let total_size = response
+        .content_length()
+        .ok_or_else(|| "Failed to get content length".to_string())?;
+    let mut file = fs::File::create(&file_path).map_err(|e| e.to_string())?;
+    let mut downloaded: u64 = 0;
+    let mut stream = response.bytes_stream();
+
+    use futures_util::StreamExt;
+    let mut last_update = std::time::Instant::now();
+    while let Some(item) = stream.next().await {
+        let chunk = item.map_err(|e| e.to_string())?;
+        std::io::copy(&mut chunk.as_ref(), &mut file).map_err(|e| e.to_string())?;
+        downloaded += chunk.len() as u64;
+
+        // Only update progress every 200ms
+        let now = std::time::Instant::now();
+        if now.duration_since(last_update).as_millis() >= 200 {
+            let progress = (downloaded as f32 / total_size as f32) * 100.0;
+            app.emit(
+                "download-progress",
+                DownloadProgress {
+                    index,
+                    progress,
+                    total_size,
+                    downloaded,
+                },
+            )
+            .map_err(|e| e.to_string())?;
+            last_update = now;
+        }
+    }
+    app.emit(
+        "download-progress",
+        DownloadProgress {
+            index,
+            progress: 100.0,
+            total_size,
+            downloaded,
+        },
+    )
+    .map_err(|e| e.to_string())?;
+
     Ok(())
 }
 
@@ -159,7 +256,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             close_app,
             start_recording,
-            stop_recording
+            stop_recording,
+            open_settings,
+            download_model
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

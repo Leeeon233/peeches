@@ -33,7 +33,11 @@ cidre = { git = "https://github.com/yury/cidre.git", branch = "main", default-fe
     "async",
     "macos_15_0",
 ] }
-tauri = { version = "2", features = ["macos-private-api", "tray-icon"] }
+tauri = { version = "2", features = [
+    "macos-private-api",
+    "tray-icon",
+    "unstable",
+] }
 tauri-plugin-shell = "2"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -49,6 +53,9 @@ candle-transformers = { version = "0.8.2", features = ["metal"] }
 candle-nn = { version = "0.8.2", features = ["metal"] }
 tokenizers = "0.21"
 tauri-plugin-log = "2"
+tauri-plugin-store = "2"
+reqwest = { version = "0.11", features = ["json", "stream"] }
+futures-util = "0.3"
 
 
 # https://github.com/tazz4843/whisper-rs/blob/master/BUILDING.md

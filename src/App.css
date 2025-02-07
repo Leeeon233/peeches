@@ -185,3 +185,61 @@ button {
 .button-group .close-button:hover {
   background: rgba(255, 0, 0, 0.8);
 }
+
+.settings-button {
+  background: none;
+  border: none;
+  color: #666;
+  cursor: pointer;
+  padding: 4px;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.3s;
+}
+
+.settings-button:hover {
+  background-color: rgba(0, 0, 0, 0.1);
+}
+
+.settings-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  animation: fade-in 0.3s ease;
+}
+
+.settings-modal {
+  background: white;
+  border-radius: 8px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  animation: slide-up 0.3s ease;
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-up {
+  from {
+    transform: translateY(20px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
