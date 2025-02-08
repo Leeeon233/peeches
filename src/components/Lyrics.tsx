@@ -19,9 +19,8 @@ function Lyrics() {
     const unlisten = listen<Event>("event", (event) => {
       const { originalText, translatedText } = event.payload;
       setOriginalText(originalText);
-      if (translatedText) {
-        setTranslatedText(translatedText);
-      }
+      setTranslatedText(translatedText);
+      
     });
 
     return () => {

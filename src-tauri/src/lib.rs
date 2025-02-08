@@ -109,12 +109,11 @@ async fn start_recording(
         open_settings(app)?;
         return Ok(false);
     }
-
-    let mut rx = output.sender.subscribe();
-    // Use the current thread runtime
     if !output.start_recording() {
         return Ok(false);
     }
+
+    let mut rx = output.sender.subscribe();
 
     let output_clone = output.inner().clone();
     let whisper = state.whisper.lock().unwrap().as_ref().unwrap().clone();
@@ -125,6 +124,11 @@ async fn start_recording(
         let collect_task = tokio::spawn(async move {
             while let Ok(sample_buf) = rx.recv().await {
                 if output_clone.is_stopped() || sample_buf.is_none() {
+                    log::info!(
+                        "stop by user {} | sample is none {}",
+                        output_clone.is_stopped(),
+                        sample_buf.is_none()
+                    );
                     tx.send(false).await.unwrap();
                     break;
                 }
@@ -142,6 +146,7 @@ async fn start_recording(
                     tx.send(true).await.unwrap()
                 }
             }
+            log::info!("# Stop whisper");
         });
         let whisper_clone = whisper.clone();
         let (tx1, mut rx2) = tokio::sync::mpsc::channel(1);
@@ -156,6 +161,17 @@ async fn start_recording(
         let translator_clone = translator.clone();
         let translate_task = tokio::spawn(async move {
             while let Some(Some(text)) = rx2.recv().await {
+                if text == " [BLANK_AUDIO]" {
+                    app.emit(
+                        "event",
+                        Event {
+                            original_text: "BLANK_AUDIO".to_string(),
+                            translated_text: "空白".to_string(),
+                        },
+                    )
+                    .unwrap();
+                    continue;
+                }
                 let translated_text = translator_clone.translate(&text).unwrap();
                 log::debug!("original_text: {}", text);
                 log::debug!("translated_text: {}", translated_text);
@@ -168,6 +184,15 @@ async fn start_recording(
                 )
                 .unwrap();
             }
+            log::info!("# Stop translate");
+            app.emit(
+                "event",
+                Event {
+                    original_text: "".to_string(),
+                    translated_text: "".to_string(),
+                },
+            )
+            .unwrap();
         });
         let _ = tokio::join!(collect_task, transcribe_task, translate_task);
     });
@@ -292,13 +317,12 @@ pub fn run() {
                 .targets(vec![
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
-                        file_name: Some("peeches.log".to_string()),
+                        file_name: Some("Peeches".to_string()),
                     })
-                    .filter(|metadata| metadata.level() > log::Level::Debug),
+                    .filter(|meta| matches!(meta.level(), log::Level::Info)),
                 ])
                 .build(),
         )
-        .plugin(tauri_nspanel::init())
         .setup(|app| {
             if let Some(tray_icon) = app.tray_by_id("tray") {
                 let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -314,11 +338,9 @@ pub fn run() {
             let window = app.get_webview_window("main").unwrap();
             #[cfg(target_os = "macos")]
             {
-                use tauri_nspanel::WebviewWindowExt;
-                window.to_panel().unwrap();
-                window.set_shadow(false)?;
                 // Hide dock icon
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                window.set_shadow(false)?;
             }
             if let Some(monitor) = window.primary_monitor().unwrap() {
                 let screen_size = monitor.size();
