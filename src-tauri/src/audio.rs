@@ -74,7 +74,7 @@ impl AudioOutput {
         Self {
             output: Arc::new(Mutex::new(delegate)),
             sender: tx,
-            stop_signal: Arc::new(AtomicBool::new(false)),
+            stop_signal: Arc::new(AtomicBool::new(true)),
             stream: Arc::new(Mutex::new(None)),
         }
     }
@@ -83,12 +83,13 @@ impl AudioOutput {
         self.stop_signal.load(Ordering::SeqCst)
     }
 
-    pub fn start_recording(&self) {
+    pub fn start_recording(&self) -> bool {
+        if !self.is_stopped() {
+            log::info!("start_recording: already started");
+            return false;
+        }
         self.stop_signal.store(false, Ordering::SeqCst);
         let output = self.output.clone();
-        // let mut rx = self.sender.subscribe();
-        // let stop_signal = self.stop_signal.clone();
-
         let content = block_on(sc::ShareableContent::current()).unwrap();
         let displays = content.displays().clone();
         let display = displays.first().expect("No display found");
@@ -112,7 +113,8 @@ impl AudioOutput {
             .expect("Failed to add stream output");
 
         block_on(stream.start()).unwrap();
-        println!("stream started");
+        log::info!("stream started");
+        true
     }
 
     pub fn stop_recording(&self) {

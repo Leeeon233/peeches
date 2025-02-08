@@ -52,7 +52,7 @@ impl Whisper {
     }
 
     pub fn can_transcribe(&self) -> bool {
-        self.samples_count.load(Ordering::SeqCst) > (16000.0 / 320. * 0.4) as usize
+        self.samples_count.load(Ordering::SeqCst) > (16000.0 / 320. * 0.6) as usize
     }
 
     pub fn transcribe(&self) -> Option<String> {

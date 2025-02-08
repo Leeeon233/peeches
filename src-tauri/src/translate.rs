@@ -120,7 +120,6 @@ impl TranslatorInner {
             .decode(&token_ids[1..], true)
             .map_err(E::msg)?;
         self.model.reset_kv_cache();
-        println!("{ans}");
         Ok(ans)
     }
 }

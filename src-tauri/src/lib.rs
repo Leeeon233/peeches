@@ -1,6 +1,5 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::time::Instant;
 use std::{
     fs,
     sync::{Arc, Mutex},
@@ -105,7 +104,7 @@ async fn start_recording(
     output: tauri::State<'_, AudioOutput>,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
-    println!("start_recording");
+    log::info!("start_recording");
     if !state.is_ready() {
         open_settings(app)?;
         return Ok(false);
@@ -113,55 +112,72 @@ async fn start_recording(
 
     let mut rx = output.sender.subscribe();
     // Use the current thread runtime
-    output.start_recording();
+    if !output.start_recording() {
+        return Ok(false);
+    }
+
     let output_clone = output.inner().clone();
     let whisper = state.whisper.lock().unwrap().as_ref().unwrap().clone();
     let translator = state.translator.lock().unwrap().as_ref().unwrap().clone();
-    tokio::spawn(async move {
-        while let Ok(sample_buf) = rx.recv().await {
-            if output_clone.is_stopped() || sample_buf.is_none() {
-                break;
+    tauri::async_runtime::spawn(async move {
+        let (tx, mut rx1) = tokio::sync::mpsc::channel(1);
+        let whisper_clone = whisper.clone();
+        let collect_task = tokio::spawn(async move {
+            while let Ok(sample_buf) = rx.recv().await {
+                if output_clone.is_stopped() || sample_buf.is_none() {
+                    tx.send(false).await.unwrap();
+                    break;
+                }
+                let audio_buf_list = sample_buf.unwrap().audio_buf_list::<2>().unwrap();
+                let buffer_list = audio_buf_list.list();
+                let samples = unsafe {
+                    let buffer = buffer_list.buffers[0];
+                    std::slice::from_raw_parts(
+                        buffer.data as *const f32,
+                        buffer.data_bytes_size as usize / std::mem::size_of::<f32>(),
+                    )
+                };
+                whisper_clone.add_new_samples(samples, 48000, 1);
+                if whisper_clone.can_transcribe() {
+                    tx.send(true).await.unwrap()
+                }
             }
-            let audio_buf_list = sample_buf.unwrap().audio_buf_list::<2>().unwrap();
-            let buffer_list = audio_buf_list.list();
-            let samples = unsafe {
-                let buffer = buffer_list.buffers[0];
-                std::slice::from_raw_parts(
-                    buffer.data as *const f32,
-                    buffer.data_bytes_size as usize / std::mem::size_of::<f32>(),
+        });
+        let whisper_clone = whisper.clone();
+        let (tx1, mut rx2) = tokio::sync::mpsc::channel(1);
+        let transcribe_task = tokio::spawn(async move {
+            while (rx1.recv().await).is_some() {
+                if let Some(text) = whisper_clone.transcribe() {
+                    tx1.send(Some(text)).await.unwrap();
+                }
+            }
+            tx1.send(None).await.unwrap();
+        });
+        let translator_clone = translator.clone();
+        let translate_task = tokio::spawn(async move {
+            while let Some(Some(text)) = rx2.recv().await {
+                let translated_text = translator_clone.translate(&text).unwrap();
+                log::debug!("original_text: {}", text);
+                log::debug!("translated_text: {}", translated_text);
+                app.emit(
+                    "event",
+                    Event {
+                        original_text: text,
+                        translated_text,
+                    },
                 )
-            };
-            whisper.add_new_samples(samples, 48000, 1);
-            let whisper_clone = whisper.clone();
-            let translator_clone = translator.clone();
-            if whisper.can_transcribe() {
-                let app = app.clone();
-                std::thread::spawn(move || {
-                    if let Some(text) = whisper_clone.transcribe() {
-                        let start_time = Instant::now();
-                        println!("text: {}", text);
-                        let translated_text = translator_clone.translate(&text).unwrap();
-                        app.emit(
-                            "event",
-                            Event {
-                                original_text: text,
-                                translated_text,
-                            },
-                        )
-                        .unwrap();
-                        let elapsed_time = start_time.elapsed();
-                        println!("transcribe_in_background time: {:?}", elapsed_time);
-                    }
-                });
+                .unwrap();
             }
-        }
+        });
+        let _ = tokio::join!(collect_task, transcribe_task, translate_task);
     });
+
     Ok(true)
 }
 
 #[tauri::command]
 fn stop_recording(output: tauri::State<'_, AudioOutput>) -> Result<(), String> {
-    println!("stop_recording");
+    log::info!("stop_recording");
     output.stop_recording();
     Ok(())
 }
@@ -270,7 +286,19 @@ fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
 pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_store::Builder::new().build())
-        // .plugin(tauri_plugin_log::Builder::new().build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .level(log::LevelFilter::Debug)
+                .targets(vec![
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
+                        file_name: Some("peeches.log".to_string()),
+                    })
+                    .filter(|metadata| metadata.level() > log::Level::Debug),
+                ])
+                .build(),
+        )
+        .plugin(tauri_nspanel::init())
         .setup(|app| {
             if let Some(tray_icon) = app.tray_by_id("tray") {
                 let quit_i = MenuItem::with_id(app, "quit", "Quit", true, None::<&str>)?;
@@ -282,49 +310,43 @@ pub fn run() {
                     }
                 });
             }
-
+            // Get the main window
+            let window = app.get_webview_window("main").unwrap();
             #[cfg(target_os = "macos")]
             {
-                // Get the main window
-                let window = app.get_webview_window("main").unwrap();
+                use tauri_nspanel::WebviewWindowExt;
+                window.to_panel().unwrap();
                 window.set_shadow(false)?;
                 // Hide dock icon
-                app.set_activation_policy(tauri::ActivationPolicy::Accessory); // Get the primary monitor size
-                if let Some(monitor) = window.primary_monitor().unwrap() {
-                    let screen_size = monitor.size();
-
-                    // Calculate window width (60% of screen width)
-                    let window_width = (screen_size.width as f64 * 0.4) as u32;
-
-                    // Calculate x position to center window
-                    let x = (screen_size.width - window_width) / 2;
-
-                    // Set window position at bottom center
-                    // Leave 20px margin from bottom
-                    let y = screen_size.height - (320_f64 * monitor.scale_factor()) as u32;
-                    // Update window size and position
-                    window
-                        .set_size(tauri::Size::Physical(tauri::PhysicalSize {
-                            width: window_width,
-                            height: (148_f64 * monitor.scale_factor()) as u32,
-                        }))
-                        .unwrap();
-
-                    window
-                        .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
-                            x: x as i32,
-                            y: y as i32,
-                        }))
-                        .unwrap();
-                }
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
             }
+            if let Some(monitor) = window.primary_monitor().unwrap() {
+                let screen_size = monitor.size();
 
-            // let whisper = Whisper::new(whisper_model.to_str().unwrap());
-            // let translator = Translator::new(
-            //     translate_model.to_str().unwrap(),
-            //     en_token.to_str().unwrap(),
-            //     zh_token.to_str().unwrap(),
-            // )?;
+                // Calculate window width (60% of screen width)
+                let window_width = (screen_size.width as f64 * 0.4) as u32;
+
+                // Calculate x position to center window
+                let x = (screen_size.width - window_width) / 2;
+
+                // Set window position at bottom center
+                // Leave 20px margin from bottom
+                let y = screen_size.height - (320_f64 * monitor.scale_factor()) as u32;
+                // Update window size and position
+                window
+                    .set_size(tauri::Size::Physical(tauri::PhysicalSize {
+                        width: window_width,
+                        height: (148_f64 * monitor.scale_factor()) as u32,
+                    }))
+                    .unwrap();
+
+                window
+                    .set_position(tauri::Position::Physical(tauri::PhysicalPosition {
+                        x: x as i32,
+                        y: y as i32,
+                    }))
+                    .unwrap();
+            }
 
             let model_dir = model_dir(app.handle())?;
 
@@ -389,7 +411,6 @@ pub fn run() {
             Ok(())
         })
         .manage(AudioOutput::new())
-        .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             close_app,
             start_recording,

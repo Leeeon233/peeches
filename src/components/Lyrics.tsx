@@ -35,7 +35,7 @@ function Lyrics() {
 
   const handleRecording = async () => {
     if (isRecording) {
-       invoke("stop_recording");
+       await invoke("stop_recording");
        setOriginalText("");
        setTranslatedText("");
        setIsRecording(false);
