@@ -1,7 +1,7 @@
 [package]
 name = "peeches"
 version = "0.1.0"
-description = "A Tauri App"
+description = "Real-time system audio whisper and translation"
 authors = ["leon7hao"]
 edition = "2021"
 

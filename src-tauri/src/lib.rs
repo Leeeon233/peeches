@@ -342,9 +342,13 @@ pub fn run() {
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
                 window.set_shadow(false)?;
             }
-            if let Some(monitor) = window.primary_monitor().unwrap() {
-                let screen_size = monitor.size();
 
+            if let Some(monitor) = window.primary_monitor().unwrap() {
+                window.set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
+                    width: 300 * monitor.scale_factor() as u32,
+                    height: 120 * monitor.scale_factor() as u32,
+                })))?;
+                let screen_size = monitor.size();
                 // Calculate window width (60% of screen width)
                 let window_width = (screen_size.width as f64 * 0.4) as u32;
 
