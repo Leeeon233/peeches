@@ -319,7 +319,11 @@ pub fn run() {
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
                         file_name: Some("Peeches".to_string()),
                     })
-                    .filter(|meta| matches!(meta.level(), log::Level::Info)),
+                    .filter(|meta| {
+                        matches!(meta.level(), log::Level::Info)
+                            || matches!(meta.level(), log::Level::Error)
+                            || matches!(meta.level(), log::Level::Warn)
+                    }),
                 ])
                 .build(),
         )
