@@ -113,9 +113,8 @@ async fn start_recording(
         return Ok(false);
     }
 
-    let mut rx = output.sender.subscribe();
-
     let output_clone = output.inner().clone();
+    let mut rx = output.sender().subscribe();
     let whisper = state.whisper.lock().unwrap().as_ref().unwrap().clone();
     let translator = state.translator.lock().unwrap().as_ref().unwrap().clone();
     tauri::async_runtime::spawn(async move {
@@ -132,16 +131,16 @@ async fn start_recording(
                     tx.send(false).await.unwrap();
                     break;
                 }
-                let audio_buf_list = sample_buf.unwrap().audio_buf_list::<2>().unwrap();
-                let buffer_list = audio_buf_list.list();
-                let samples = unsafe {
-                    let buffer = buffer_list.buffers[0];
-                    std::slice::from_raw_parts(
-                        buffer.data as *const f32,
-                        buffer.data_bytes_size as usize / std::mem::size_of::<f32>(),
-                    )
-                };
-                whisper_clone.add_new_samples(samples, 48000, 1);
+                // let audio_buf_list = sample_buf.unwrap().audio_buf_list::<2>().unwrap();
+                // let buffer_list = audio_buf_list.list();
+                // let samples = unsafe {
+                //     let buffer = buffer_list.buffers[0];
+                //     std::slice::from_raw_parts(
+                //         buffer.data as *const f32,
+                //         buffer.data_bytes_size as usize / std::mem::size_of::<f32>(),
+                //     )
+                // };
+                whisper_clone.add_new_samples(&sample_buf.unwrap(), 48000, 1);
                 if whisper_clone.can_transcribe() {
                     tx.send(true).await.unwrap()
                 }
@@ -214,18 +213,23 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
         settings_window.set_focus().map_err(|e| e.to_string())?;
         Ok(())
     } else {
-        let settings = WebviewWindowBuilder::new(
+        let mut builder = WebviewWindowBuilder::new(
             &app,
             "settings",
             tauri::WebviewUrl::App("/#/settings".into()),
         )
-        .hidden_title(true)
-        .title_bar_style(tauri::TitleBarStyle::Overlay)
         .inner_size(400.0, 300.0)
         .resizable(false)
-        .center()
-        .build();
+        .center();
 
+        #[cfg(target_os = "macos")]
+        {
+            builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
+        }
+
+        let settings = builder.build();
         match settings {
             Ok(_) => Ok(()),
             Err(e) => Err(e.to_string()),
@@ -310,6 +314,7 @@ fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
+        .plugin(tauri_plugin_log::Builder::new().build())
         .plugin(tauri_plugin_store::Builder::new().build())
         .plugin(
             tauri_plugin_log::Builder::new()
@@ -401,7 +406,9 @@ pub fn run() {
                             None
                         }
                     } else {
-                        None
+                        models.remove("ggml-base-q5_1.bin");
+                            store.set("models", serde_json::to_value(&models).unwrap());
+                            None
                     }
                 } else {
                     None
@@ -426,6 +433,8 @@ pub fn run() {
                             None
                         }
                     } else {
+                        models.remove("opus-mt-en-zh.bin");
+                        store.set("models", serde_json::to_value(&models).unwrap());
                         None
                     }
                 } else {

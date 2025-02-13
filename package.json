@@ -11,6 +11,7 @@
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-log": "~2",
     "@tauri-apps/plugin-shell": "^2",
     "@tauri-apps/plugin-store": "~2",
     "lucide-react": "^0.474.0",

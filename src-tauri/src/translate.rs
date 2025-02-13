@@ -47,7 +47,11 @@ impl TranslatorInner {
         let tokenizer = Tokenizer::from_file(en_token).map_err(E::msg)?;
         let tokenizer_dec = Tokenizer::from_file(zh_token).map_err(E::msg)?;
         // let tokenizer_dec = TokenOutputStream::new(tokenizer_dec);
-        let device = candle_core::Device::new_metal(0)?;
+        let device = if cfg!(target_os="macos"){
+            candle_core::Device::new_metal(0)?
+        } else{
+            candle_core::Device::new_cuda(0)?
+        };
         let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[&model], DType::F32, &device)? };
         // https://huggingface.co/Helsinki-NLP/opus-mt-en-zh/blob/main/config.json
         let config = marian::Config {

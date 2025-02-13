@@ -24,7 +24,7 @@ impl Whisper {
             whisper_model_path,
             WhisperContextParameters {
                 use_gpu: true,
-                flash_attn: false,
+                flash_attn: true,
                 ..Default::default()
             },
         )
