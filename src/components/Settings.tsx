@@ -46,15 +46,13 @@ function Settings() {
       console.log("progress: ", progress, "fileName: ", fileName);
       setModels((prev) => {
         const newModels = { ...prev };
-        if (newModels[fileName]) {
-          newModels[fileName] = { ...newModels[fileName], progress };
-          if (progress === 100) {
-            newModels[fileName] = {
-              ...newModels[fileName],
-              status: "completed",
-            };
-            store.set("models", newModels);
-          }
+        newModels[fileName] = { ...newModels[fileName], progress };
+        if (progress === 100) {
+          newModels[fileName] = {
+            ...newModels[fileName],
+            status: "completed",
+          };
+          store.set("models", newModels);
         }
         return newModels;
       });
@@ -74,7 +72,7 @@ function Settings() {
           if (needUpdate) {
             listenDownloadProgress();
           }
-          setModels({...defaultModels,...value});
+          setModels({ ...defaultModels, ...value });
         } else {
           setModels(defaultModels);
           listenDownloadProgress();

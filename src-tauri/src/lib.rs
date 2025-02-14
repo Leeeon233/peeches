@@ -34,6 +34,7 @@ struct AppState {
 
 impl AppState {
     fn set_model(&self, app: &AppHandle, file_name: &str) -> Result<(), String> {
+        log::info!("create model: {}", file_name);
         match file_name {
             "ggml-base-q5_1.bin" => {
                 self.whisper
@@ -114,6 +115,7 @@ async fn start_recording(
     }
 
     let output_clone = output.inner().clone();
+    let output_clone2 = output.inner().clone();
     let mut rx = output.sender().subscribe();
     let whisper = state.whisper.lock().unwrap().as_ref().unwrap().clone();
     let translator = state.translator.lock().unwrap().as_ref().unwrap().clone();
@@ -140,7 +142,11 @@ async fn start_recording(
                 //         buffer.data_bytes_size as usize / std::mem::size_of::<f32>(),
                 //     )
                 // };
-                whisper_clone.add_new_samples(&sample_buf.unwrap(), 48000, 1);
+                whisper_clone.add_new_samples(
+                    &sample_buf.unwrap(),
+                    48000,
+                    if cfg!(target_os = "macos") { 1 } else { 2 },
+                );
                 if whisper_clone.can_transcribe() {
                     tx.send(true).await.unwrap()
                 }
@@ -151,8 +157,16 @@ async fn start_recording(
         let (tx1, mut rx2) = tokio::sync::mpsc::channel(1);
         let transcribe_task = tokio::spawn(async move {
             while (rx1.recv().await).is_some() {
-                if let Some(text) = whisper_clone.transcribe() {
-                    tx1.send(Some(text)).await.unwrap();
+                match whisper_clone.transcribe() {
+                    Ok(Some(text)) => {
+                        tx1.send(Some(text)).await.unwrap();
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        log::error!("transcribe error: {}", e);
+                        output_clone2.stop_recording();
+                        break;
+                    }
                 }
             }
             tx1.send(None).await.unwrap();
@@ -246,42 +260,51 @@ async fn download_model(
 ) -> Result<(), String> {
     let model_dir = model_dir(&app)?;
     let file_path = model_dir.join(&file_name);
+    log::info!("download model save to: {}", file_path.to_str().unwrap());
+    let mut total_size = 0;
+    let mut downloaded = 0;
 
-    // Download the file
-    let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
+    if file_path.exists() {
+        log::info!("model already exists: {}", file_path.to_str().unwrap());
+        // TODO: check file md5
+    } else {
+        // Download the file
+        let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
 
-    let total_size = response
-        .content_length()
-        .ok_or_else(|| "Failed to get content length".to_string())?;
-    let mut file = fs::File::create(&file_path).map_err(|e| e.to_string())?;
-    let mut downloaded: u64 = 0;
-    let mut stream = response.bytes_stream();
+        total_size = response
+            .content_length()
+            .ok_or_else(|| "Failed to get content length".to_string())?;
+        let mut file = fs::File::create(&file_path).map_err(|e| e.to_string())?;
+        let mut stream = response.bytes_stream();
 
-    use futures_util::StreamExt;
-    let mut last_update = std::time::Instant::now();
-    while let Some(item) = stream.next().await {
-        let chunk = item.map_err(|e| e.to_string())?;
-        std::io::copy(&mut chunk.as_ref(), &mut file).map_err(|e| e.to_string())?;
-        downloaded += chunk.len() as u64;
+        use futures_util::StreamExt;
+        let mut last_update = std::time::Instant::now();
+        while let Some(item) = stream.next().await {
+            let chunk = item.map_err(|e| e.to_string())?;
+            std::io::copy(&mut chunk.as_ref(), &mut file).map_err(|e| e.to_string())?;
+            downloaded += chunk.len() as u64;
 
-        // Only update progress every 200ms
-        let now = std::time::Instant::now();
-        if now.duration_since(last_update).as_millis() >= 200 {
-            let progress = (downloaded as f32 / total_size as f32) * 100.0;
-            app.emit(
-                "download-progress",
-                DownloadProgress {
-                    file_name: file_name.clone(),
-                    progress,
-                    total_size,
-                    downloaded,
-                },
-            )
-            .map_err(|e| e.to_string())?;
-            last_update = now;
+            // Only update progress every 200ms
+            let now = std::time::Instant::now();
+            if now.duration_since(last_update).as_millis() >= 200 {
+                let progress = (downloaded as f32 / total_size as f32) * 100.0;
+                log::info!("download progress: {} %", progress);
+                app.emit(
+                    "download-progress",
+                    DownloadProgress {
+                        file_name: file_name.clone(),
+                        progress,
+                        total_size,
+                        downloaded,
+                    },
+                )
+                .map_err(|e| e.to_string())?;
+                last_update = now;
+            }
         }
     }
     state.set_model(&app, &file_name)?;
+    log::debug!("download model: {} completed", file_name);
     app.emit(
         "download-progress",
         DownloadProgress {
@@ -320,6 +343,7 @@ pub fn run() {
             tauri_plugin_log::Builder::new()
                 .level(log::LevelFilter::Debug)
                 .targets(vec![
+                    tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Webview),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::Stdout),
                     tauri_plugin_log::Target::new(tauri_plugin_log::TargetKind::LogDir {
                         file_name: Some("Peeches".to_string()),
@@ -407,8 +431,8 @@ pub fn run() {
                         }
                     } else {
                         models.remove("ggml-base-q5_1.bin");
-                            store.set("models", serde_json::to_value(&models).unwrap());
-                            None
+                        store.set("models", serde_json::to_value(&models).unwrap());
+                        None
                     }
                 } else {
                     None

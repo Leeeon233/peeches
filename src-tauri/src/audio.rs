@@ -8,7 +8,7 @@ use tokio::sync::{
     Mutex,
 };
 
-
+#[derive(Clone)]
 pub struct AudioOutput {
     #[cfg(target_os = "macos")]
     inner: macos::MacAudioOutput,
@@ -55,30 +55,32 @@ impl AudioOutput {
 
 #[cfg(target_os = "windows")]
 mod win {
-    use cpal::{traits::StreamTrait, Sample};
+    use std::sync::Arc;
+
     use cpal::traits::DeviceTrait;
     use cpal::traits::HostTrait;
+    use cpal::{traits::StreamTrait, Sample};
     use tokio::sync::{
         broadcast::{self, Sender},
         Mutex,
     };
-    fn write_input_data(data: &mut [f32])
-    {
-        tx.send(Some(data.to_vec())).unwrap();
-    }
 
-
+    #[derive(Clone)]
     pub struct WinAudioOutput {
-        stream: cpal::Stream,
+        stream: Arc<cpal::Stream>,
         pub sender: Sender<Option<Vec<f32>>>,
     }
 
     impl WinAudioOutput {
-        pub fn new() -> anyhow::Result< Self> {
+        pub fn new() -> anyhow::Result<Self> {
             let (tx, _rx) = broadcast::channel(32);
             let err_fn = move |err| {
                 eprintln!("an error occurred on stream: {}", err);
             };
+            let host = cpal::default_host();
+            let device = host.default_output_device().unwrap();
+            let config = device.default_output_config().unwrap();
+            let tx_clone = tx.clone();
             let stream = match config.sample_format() {
                 // cpal::SampleFormat::I8 => device.build_output_stream::<i8, _, _>(
                 //     &config.into(),
@@ -98,9 +100,11 @@ mod win {
                 //     err_fn,
                 //     None,
                 // )?,
-                cpal::SampleFormat::F32 => device.build_output_stream::<f32, _, _>(
+                cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(
                     &config.into(),
-                    move |data, _: &_| write_input_data(data),
+                    move |data, _: &_| {
+                        tx_clone.send(Some(data.to_vec())).unwrap();
+                    },
                     err_fn,
                     None,
                 )?,
@@ -110,7 +114,10 @@ mod win {
                     )))
                 }
             };
-            Ok(WinAudioOutput { stream, sender: tx })
+            Ok(WinAudioOutput {
+                stream: Arc::new(stream),
+                sender: tx,
+            })
         }
 
         pub fn is_stopped(&self) -> bool {

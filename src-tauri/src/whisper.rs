@@ -24,7 +24,7 @@ impl Whisper {
             whisper_model_path,
             WhisperContextParameters {
                 use_gpu: true,
-                flash_attn: true,
+                flash_attn: false,
                 ..Default::default()
             },
         )
@@ -55,29 +55,31 @@ impl Whisper {
         self.samples_count.load(Ordering::SeqCst) > (16000.0 / 320. * 0.6) as usize
     }
 
-    pub fn transcribe(&self) -> Option<String> {
+    pub fn transcribe(&self) -> anyhow::Result<Option<String>> {
         let speech_buf = self.speech_buf.lock().unwrap();
-        let min_samples = (1.0 * 16_000.0) as usize;
+        let min_samples = (1.1 * 16_000.0) as usize;
         if speech_buf.len() <= min_samples {
             println!("Less than 1s. Skipping...");
-            return None;
+            return Ok(None);
         }
         let samples = speech_buf.to_vec();
         drop(speech_buf);
-
         let mut state = self.whisper_ctx.lock().unwrap();
         let mut params = FullParams::new(SamplingStrategy::default());
-
         params.set_print_progress(false);
         params.set_print_realtime(false);
         params.set_print_special(false);
         params.set_print_timestamps(false);
         params.set_debug_mode(false);
         params.set_language(Some("en"));
-        state.full(params, &samples).ok()?;
-        let text = state.full_get_segment_text_lossy(0).unwrap();
+        params.set_duration_ms(3000);
+        params.set_logprob_thold(-2.0);
+        params.set_temperature(0.2);
+        params.set_suppress_non_speech_tokens(true);
+        state.full(params, &samples)?;
+        let text = state.full_get_segment_text_lossy(0)?;
         self.samples_count.store(0, Ordering::SeqCst);
-        Some(text)
+        Ok(Some(text))
     }
 }
 
