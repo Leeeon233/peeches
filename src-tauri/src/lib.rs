@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
+use std::sync::mpsc;
 use std::{
     fs,
     sync::{Arc, Mutex},
@@ -27,12 +28,76 @@ struct ModelInfo {
     status: String,
 }
 
+#[derive(Clone)]
 struct AppState {
+    audio_output: Arc<Mutex<AudioOutput>>,
     whisper: Arc<Mutex<Option<Whisper>>>,
     translator: Arc<Mutex<Option<Translator>>>,
 }
 
 impl AppState {
+    pub fn new(app: AppHandle) -> anyhow::Result<Self> {
+        let (audio_sender, audio_receiver) = mpsc::channel();
+        let (transcript_sender, transcript_receiver) = mpsc::channel();
+        let audio_output = AudioOutput::new(audio_sender)?;
+        let whisper = Arc::new(Mutex::new(None::<Whisper>));
+        let whisper_arc = whisper.clone();
+        let translator = Arc::new(Mutex::new(None::<Translator>));
+        let translator_arc = translator.clone();
+
+        std::thread::spawn(move || {
+            while let Ok(samples) = audio_receiver.recv() {
+                let mut whisper = whisper_arc.lock().unwrap();
+                if whisper.is_none() {
+                    continue;
+                }
+                let text = whisper.as_mut().unwrap().transcribe(samples).unwrap();
+                transcript_sender.send(text).unwrap();
+            }
+        });
+
+        std::thread::spawn(move || {
+            while let Ok(text) = transcript_receiver.recv() {
+                let mut translator = translator_arc.lock().unwrap();
+                if translator.is_none() {
+                    continue;
+                }
+                let translated_text = translator.as_mut().unwrap().translate(&text).unwrap();
+                if text == " [BLANK_AUDIO]" {
+                    app.emit(
+                        "event",
+                        Event {
+                            original_text: "BLANK_AUDIO".to_string(),
+                            translated_text: "空白".to_string(),
+                        },
+                    )
+                    .unwrap();
+                    continue;
+                }
+                log::debug!("original_text: {}", text);
+                log::debug!("translated_text: {}", translated_text);
+                app.emit(
+                    "event",
+                    Event {
+                        original_text: text,
+                        translated_text,
+                    },
+                )
+                .unwrap();
+            }
+        });
+
+        Ok(Self {
+            audio_output: Arc::new(Mutex::new(audio_output)),
+            whisper,
+            translator,
+        })
+    }
+
+    fn is_ready(&self) -> bool {
+        self.whisper.lock().unwrap().is_some() && self.translator.lock().unwrap().is_some()
+    }
+
     fn set_model(&self, app: &AppHandle, file_name: &str) -> Result<(), String> {
         log::info!("create model: {}", file_name);
         match file_name {
@@ -51,10 +116,6 @@ impl AppState {
             _ => unreachable!(),
         }
         Ok(())
-    }
-
-    fn is_ready(&self) -> bool {
-        self.whisper.lock().unwrap().is_some() && self.translator.lock().unwrap().is_some()
     }
 
     fn create_whisper(app: &AppHandle, file_name: &str) -> Result<Whisper, String> {
@@ -102,7 +163,6 @@ pub struct DownloadProgress {
 #[tauri::command]
 async fn start_recording(
     app: AppHandle,
-    output: tauri::State<'_, AudioOutput>,
     state: tauri::State<'_, AppState>,
 ) -> Result<bool, String> {
     log::info!("start_recording");
@@ -110,113 +170,27 @@ async fn start_recording(
         open_settings(app)?;
         return Ok(false);
     }
-    if !output.start_recording() {
-        return Ok(false);
-    }
-
-    let output_clone = output.inner().clone();
-    let output_clone2 = output.inner().clone();
-    let mut rx = output.sender().subscribe();
-    let whisper = state.whisper.lock().unwrap().as_ref().unwrap().clone();
-    let translator = state.translator.lock().unwrap().as_ref().unwrap().clone();
-    tauri::async_runtime::spawn(async move {
-        let (tx, mut rx1) = tokio::sync::mpsc::channel(1);
-        let whisper_clone = whisper.clone();
-        let collect_task = tokio::spawn(async move {
-            while let Ok(sample_buf) = rx.recv().await {
-                if output_clone.is_stopped() || sample_buf.is_none() {
-                    log::info!(
-                        "stop by user {} | sample is none {}",
-                        output_clone.is_stopped(),
-                        sample_buf.is_none()
-                    );
-                    tx.send(false).await.unwrap();
-                    break;
-                }
-                // let audio_buf_list = sample_buf.unwrap().audio_buf_list::<2>().unwrap();
-                // let buffer_list = audio_buf_list.list();
-                // let samples = unsafe {
-                //     let buffer = buffer_list.buffers[0];
-                //     std::slice::from_raw_parts(
-                //         buffer.data as *const f32,
-                //         buffer.data_bytes_size as usize / std::mem::size_of::<f32>(),
-                //     )
-                // };
-                whisper_clone.add_new_samples(
-                    &sample_buf.unwrap(),
-                    48000,
-                    if cfg!(target_os = "macos") { 1 } else { 2 },
-                );
-                if whisper_clone.can_transcribe() {
-                    tx.send(true).await.unwrap()
-                }
-            }
-            log::info!("# Stop whisper");
-        });
-        let whisper_clone = whisper.clone();
-        let (tx1, mut rx2) = tokio::sync::mpsc::channel(1);
-        let transcribe_task = tokio::spawn(async move {
-            while (rx1.recv().await).is_some() {
-                match whisper_clone.transcribe() {
-                    Ok(Some(text)) => {
-                        tx1.send(Some(text)).await.unwrap();
-                    }
-                    Ok(None) => {}
-                    Err(e) => {
-                        log::error!("transcribe error: {}", e);
-                        output_clone2.stop_recording();
-                        break;
-                    }
-                }
-            }
-            tx1.send(None).await.unwrap();
-        });
-        let translator_clone = translator.clone();
-        let translate_task = tokio::spawn(async move {
-            while let Some(Some(text)) = rx2.recv().await {
-                if text == " [BLANK_AUDIO]" {
-                    app.emit(
-                        "event",
-                        Event {
-                            original_text: "BLANK_AUDIO".to_string(),
-                            translated_text: "空白".to_string(),
-                        },
-                    )
-                    .unwrap();
-                    continue;
-                }
-                let translated_text = translator_clone.translate(&text).unwrap();
-                log::debug!("original_text: {}", text);
-                log::debug!("translated_text: {}", translated_text);
-                app.emit(
-                    "event",
-                    Event {
-                        original_text: text,
-                        translated_text,
-                    },
-                )
-                .unwrap();
-            }
-            log::info!("# Stop translate");
-            app.emit(
-                "event",
-                Event {
-                    original_text: "".to_string(),
-                    translated_text: "".to_string(),
-                },
-            )
-            .unwrap();
-        });
-        let _ = tokio::join!(collect_task, transcribe_task, translate_task);
-    });
-
+    state
+        .audio_output
+        .lock()
+        .unwrap()
+        .start_recording()
+        .map_err(|e| e.to_string())?;
     Ok(true)
 }
 
 #[tauri::command]
-fn stop_recording(output: tauri::State<'_, AudioOutput>) -> Result<(), String> {
+fn stop_recording(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(), String> {
     log::info!("stop_recording");
-    output.stop_recording();
+    state.audio_output.lock().unwrap().stop_recording();
+    app.emit(
+        "event",
+        Event {
+            original_text: "已暂停".to_string(),
+            translated_text: "".to_string(),
+        },
+    )
+    .unwrap();
     Ok(())
 }
 
@@ -227,7 +201,7 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
         settings_window.set_focus().map_err(|e| e.to_string())?;
         Ok(())
     } else {
-        let mut builder = WebviewWindowBuilder::new(
+        let builder = WebviewWindowBuilder::new(
             &app,
             "settings",
             tauri::WebviewUrl::App("/#/settings".into()),
@@ -373,8 +347,8 @@ pub fn run() {
             {
                 // Hide dock icon
                 app.set_activation_policy(tauri::ActivationPolicy::Accessory);
-                window.set_shadow(false)?;
             }
+            window.set_shadow(false)?;
 
             if let Some(monitor) = window.primary_monitor().unwrap() {
                 window.set_min_size(Some(tauri::Size::Physical(tauri::PhysicalSize {
@@ -407,6 +381,8 @@ pub fn run() {
                     .unwrap();
             }
 
+            let app_state = AppState::new(app.handle().clone())?;
+
             let model_dir = model_dir(app.handle())?;
 
             // Get model store state
@@ -417,63 +393,35 @@ pub fn run() {
             let mut models: HashMap<String, ModelInfo> =
                 serde_json::from_value(models).unwrap_or_default();
 
-            let whisper_model = {
-                if let Some(info) = models.get("ggml-base-q5_1.bin") {
-                    if info.status == "completed" {
-                        let model_path = model_dir.join(&info.file_name);
-                        if model_path.exists() {
-                            let whisper = Whisper::new(model_path.to_str().unwrap());
-                            Some(whisper)
-                        } else {
-                            models.remove("ggml-base-q5_1.bin");
-                            store.set("models", serde_json::to_value(&models).unwrap());
-                            None
-                        }
-                    } else {
-                        models.remove("ggml-base-q5_1.bin");
-                        store.set("models", serde_json::to_value(&models).unwrap());
-                        None
-                    }
+            if let Some(info) = models.get("ggml-base-q5_1.bin") {
+                let model_path = model_dir.join(&info.file_name);
+                if info.status == "completed" && model_path.exists() {
+                    let whisper = Whisper::new(model_path.to_str().unwrap());
+                    app_state.whisper.lock().unwrap().replace(whisper);
                 } else {
-                    None
+                    models.remove("ggml-base-q5_1.bin");
+                    store.set("models", serde_json::to_value(&models).unwrap());
                 }
             };
 
-            let translator = {
-                if let Some(info) = models.get("opus-mt-en-zh.bin") {
-                    if info.status == "completed" {
-                        let model_path = model_dir.join(&info.file_name);
-                        if model_path.exists() {
-                            let (en_token, zh_token) = get_token_path(app.handle());
-                            let translator = Translator::new(
-                                model_path.to_str().unwrap(),
-                                en_token.to_str().unwrap(),
-                                zh_token.to_str().unwrap(),
-                            )?;
-                            Some(translator)
-                        } else {
-                            models.remove("opus-mt-en-zh.bin");
-                            store.set("models", serde_json::to_value(&models).unwrap());
-                            None
-                        }
-                    } else {
-                        models.remove("opus-mt-en-zh.bin");
-                        store.set("models", serde_json::to_value(&models).unwrap());
-                        None
-                    }
+            if let Some(info) = models.get("opus-mt-en-zh.bin") {
+                let model_path = model_dir.join(&info.file_name);
+                if info.status == "completed" && model_path.exists() {
+                    let (en_token, zh_token) = get_token_path(app.handle());
+                    let translator = Translator::new(
+                        model_path.to_str().unwrap(),
+                        en_token.to_str().unwrap(),
+                        zh_token.to_str().unwrap(),
+                    )?;
+                    app_state.translator.lock().unwrap().replace(translator);
                 } else {
-                    None
+                    models.remove("opus-mt-en-zh.bin");
+                    store.set("models", serde_json::to_value(&models).unwrap());
                 }
             };
-
-            app.manage(AppState {
-                whisper: Arc::new(Mutex::new(whisper_model)),
-                translator: Arc::new(Mutex::new(translator)),
-            });
-
+            app.manage(app_state);
             Ok(())
         })
-        .manage(AudioOutput::new())
         .invoke_handler(tauri::generate_handler![
             close_app,
             start_recording,

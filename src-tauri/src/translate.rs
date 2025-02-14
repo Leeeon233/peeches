@@ -2,39 +2,9 @@ use anyhow::Error as E;
 use candle_core::{DType, Tensor};
 use candle_nn::VarBuilder;
 use candle_transformers::models::marian::{self, MTModel};
-use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
 
-#[derive(Clone)]
 pub struct Translator {
-    inner: Arc<Mutex<TranslatorInner>>,
-}
-
-impl Translator {
-    pub fn new(model: &str, en_token: &str, zh_token: &str) -> anyhow::Result<Self> {
-        let inner = TranslatorInner::new(model, en_token, zh_token)?;
-        Ok(Self {
-            inner: Arc::new(Mutex::new(inner)),
-        })
-    }
-
-    pub fn translate(&self, text: &str) -> anyhow::Result<String> {
-        let mut inner = self.inner.lock().unwrap();
-        inner.translate(text)
-    }
-}
-// struct TranslatorInner {}
-// impl TranslatorInner {
-//     fn new(model: &str, en_token: &str, zh_token: &str) -> anyhow::Result<Self> {
-//         Ok(Self {})
-//     }
-
-//     fn translate(&self, text: &str) -> anyhow::Result<String> {
-//         Ok(String::new())
-//     }
-// }
-
-struct TranslatorInner {
     model: MTModel,
     config: marian::Config,
     tokenizer: Tokenizer,
@@ -42,14 +12,14 @@ struct TranslatorInner {
     device: candle_core::Device,
 }
 
-impl TranslatorInner {
-    fn new(model: &str, en_token: &str, zh_token: &str) -> anyhow::Result<Self> {
+impl Translator {
+    pub fn new(model: &str, en_token: &str, zh_token: &str) -> anyhow::Result<Self> {
         let tokenizer = Tokenizer::from_file(en_token).map_err(E::msg)?;
         let tokenizer_dec = Tokenizer::from_file(zh_token).map_err(E::msg)?;
         // let tokenizer_dec = TokenOutputStream::new(tokenizer_dec);
-        let device = if cfg!(target_os="macos"){
+        let device = if cfg!(target_os = "macos") {
             candle_core::Device::new_metal(0)?
-        } else{
+        } else {
             candle_core::Device::new_cuda(0)?
         };
         let vb = unsafe { VarBuilder::from_mmaped_safetensors(&[&model], DType::F32, &device)? };
@@ -85,7 +55,7 @@ impl TranslatorInner {
         })
     }
 
-    fn translate(&mut self, text: &str) -> anyhow::Result<String> {
+    pub fn translate(&mut self, text: &str) -> anyhow::Result<String> {
         let mut logits_processor =
             candle_transformers::generation::LogitsProcessor::new(1337, None, None);
         let encoder_xs = {

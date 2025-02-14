@@ -1,50 +1,62 @@
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc,
+    atomic::{AtomicUsize, Ordering},
+    mpsc, Arc, Mutex,
 };
 
-use tokio::sync::{
-    broadcast::{self, Sender},
-    Mutex,
-};
+use ringbuffer::{AllocRingBuffer, RingBuffer};
 
-#[derive(Clone)]
 pub struct AudioOutput {
     #[cfg(target_os = "macos")]
     inner: macos::MacAudioOutput,
     #[cfg(target_os = "windows")]
     inner: win::WinAudioOutput,
+    sender: mpsc::Sender<Vec<f32>>,
+    speech_buf: Arc<Mutex<AllocRingBuffer<f32>>>,
 }
 
 unsafe impl Send for AudioOutput {}
 unsafe impl Sync for AudioOutput {}
 
 impl AudioOutput {
-    pub fn new() -> Self {
+    pub fn new(sender: mpsc::Sender<Vec<f32>>) -> anyhow::Result<Self> {
+        let speech_buf = Arc::new(Mutex::new(AllocRingBuffer::new(16000 * 3)));
+        let speech_buf_clone = speech_buf.clone();
+        let counter = Arc::new(AtomicUsize::new(0));
+        let sender_clone = sender.clone();
+        let cb = Box::new(move |data| {
+            let mut buf = speech_buf_clone.lock().unwrap();
+            buf.extend(data);
+            counter.fetch_add(1, Ordering::SeqCst);
+            if counter.load(Ordering::SeqCst) > (16000.0 / 320.0 * 0.6) as usize
+                && buf.len() as f64 > 1.1 * 16000.0
+            {
+                let samples = buf.to_vec();
+                drop(buf);
+                sender_clone.send(samples).unwrap();
+                counter.store(0, Ordering::SeqCst);
+            }
+        });
         #[cfg(target_os = "macos")]
         {
-            Self {
+            Ok(Self {
                 inner: macos::MacAudioOutput::new(),
-            }
+            })
         }
         #[cfg(target_os = "windows")]
         {
-            Self {
-                // TODO:
-                inner: win::WinAudioOutput::new().unwrap(),
-            }
+            Ok(Self {
+                inner: win::WinAudioOutput::new(cb)?,
+                sender,
+                speech_buf,
+            })
         }
-    }
-
-    pub fn sender(&self) -> Sender<Option<Vec<f32>>> {
-        self.inner.sender.clone()
     }
 
     pub fn is_stopped(&self) -> bool {
         self.inner.is_stopped()
     }
 
-    pub fn start_recording(&self) -> bool {
+    pub fn start_recording(&self) -> anyhow::Result<()> {
         self.inner.start_recording()
     }
 
@@ -55,55 +67,38 @@ impl AudioOutput {
 
 #[cfg(target_os = "windows")]
 mod win {
+    use std::sync::atomic::AtomicBool;
+    use std::sync::atomic::Ordering;
     use std::sync::Arc;
 
     use cpal::traits::DeviceTrait;
     use cpal::traits::HostTrait;
-    use cpal::{traits::StreamTrait, Sample};
-    use tokio::sync::{
-        broadcast::{self, Sender},
-        Mutex,
-    };
+    use cpal::traits::StreamTrait;
 
-    #[derive(Clone)]
+    use super::audio_resample;
+    use super::stereo_to_mono;
+
     pub struct WinAudioOutput {
-        stream: Arc<cpal::Stream>,
-        pub sender: Sender<Option<Vec<f32>>>,
+        stream: cpal::Stream,
+        is_stopped: Arc<AtomicBool>,
     }
 
     impl WinAudioOutput {
-        pub fn new() -> anyhow::Result<Self> {
-            let (tx, _rx) = broadcast::channel(32);
+        pub fn new(on_data: Box<dyn Fn(Vec<f32>) + Send>) -> anyhow::Result<Self> {
             let err_fn = move |err| {
                 eprintln!("an error occurred on stream: {}", err);
             };
             let host = cpal::default_host();
             let device = host.default_output_device().unwrap();
             let config = device.default_output_config().unwrap();
-            let tx_clone = tx.clone();
             let stream = match config.sample_format() {
-                // cpal::SampleFormat::I8 => device.build_output_stream::<i8, _, _>(
-                //     &config.into(),
-                //     move |data, _: &_| write_input_data::<i8>(data),
-                //     err_fn,
-                //     None,
-                // )?,
-                // cpal::SampleFormat::I16 => device.build_output_stream::<i16, _, _>(
-                //     &config.into(),
-                //     move |data, _: &_| write_input_data::<i16>(data),
-                //     err_fn,
-                //     None,
-                // )?,
-                // cpal::SampleFormat::I32 => device.build_output_stream::<i32, _, _>(
-                //     &config.into(),
-                //     move |data, _: &_| write_input_data::<i32>(data),
-                //     err_fn,
-                //     None,
-                // )?,
                 cpal::SampleFormat::F32 => device.build_input_stream::<f32, _, _>(
                     &config.into(),
                     move |data, _: &_| {
-                        tx_clone.send(Some(data.to_vec())).unwrap();
+                        // TODO: assume 2 channels
+                        let mut resampled: Vec<f32> = audio_resample(data, 48000, 16000, 2);
+                        resampled = stereo_to_mono(&resampled).unwrap();
+                        on_data(resampled);
                     },
                     err_fn,
                     None,
@@ -115,25 +110,54 @@ mod win {
                 }
             };
             Ok(WinAudioOutput {
-                stream: Arc::new(stream),
-                sender: tx,
+                stream,
+                is_stopped: Arc::new(AtomicBool::new(true)),
             })
         }
 
         pub fn is_stopped(&self) -> bool {
-            false
+            self.is_stopped.load(Ordering::SeqCst)
         }
 
-        pub fn start_recording(&self) -> bool {
-            println!("stream");
-            self.stream.play().unwrap();
-            true
+        pub fn start_recording(&self) -> anyhow::Result<()> {
+            self.stream.play()?;
+            self.is_stopped.store(false, Ordering::SeqCst);
+            Ok(())
         }
 
         pub fn stop_recording(&self) {
-            // self.stream.stop().unwrap();
+            self.stream.pause();
+            self.is_stopped.store(true, Ordering::SeqCst);
         }
     }
+}
+
+pub fn audio_resample(
+    data: &[f32],
+    sample_rate0: u32,
+    sample_rate: u32,
+    channels: u16,
+) -> Vec<f32> {
+    use samplerate::{convert, ConverterType};
+    convert(
+        sample_rate0 as _,
+        sample_rate as _,
+        channels as _,
+        ConverterType::SincBestQuality,
+        data,
+    )
+    .unwrap_or_default()
+}
+
+pub fn stereo_to_mono(stereo_data: &[f32]) -> anyhow::Result<Vec<f32>> {
+    let mut mono_data = Vec::with_capacity(stereo_data.len() / 2);
+
+    for chunk in stereo_data.chunks_exact(2) {
+        let average = (chunk[0] + chunk[1]) / 2.0;
+        mono_data.push(average);
+    }
+
+    Ok(mono_data)
 }
 
 #[cfg(target_os = "macos")]
