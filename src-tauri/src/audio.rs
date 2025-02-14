@@ -10,8 +10,6 @@ pub struct AudioOutput {
     inner: macos::MacAudioOutput,
     #[cfg(target_os = "windows")]
     inner: win::WinAudioOutput,
-    sender: mpsc::Sender<Vec<f32>>,
-    speech_buf: Arc<Mutex<AllocRingBuffer<f32>>>,
 }
 
 unsafe impl Send for AudioOutput {}
@@ -20,11 +18,9 @@ unsafe impl Sync for AudioOutput {}
 impl AudioOutput {
     pub fn new(sender: mpsc::Sender<Vec<f32>>) -> anyhow::Result<Self> {
         let speech_buf = Arc::new(Mutex::new(AllocRingBuffer::new(16000 * 3)));
-        let speech_buf_clone = speech_buf.clone();
         let counter = Arc::new(AtomicUsize::new(0));
-        let sender_clone = sender.clone();
         let cb = Box::new(move |data| {
-            let mut buf = speech_buf_clone.lock().unwrap();
+            let mut buf = speech_buf.lock().unwrap();
             buf.extend(data);
             counter.fetch_add(1, Ordering::SeqCst);
             if counter.load(Ordering::SeqCst) > (16000.0 / 320.0 * 0.6) as usize
@@ -32,28 +28,22 @@ impl AudioOutput {
             {
                 let samples = buf.to_vec();
                 drop(buf);
-                sender_clone.send(samples).unwrap();
+                sender.send(samples).unwrap();
                 counter.store(0, Ordering::SeqCst);
             }
         });
         #[cfg(target_os = "macos")]
         {
             Ok(Self {
-                inner: macos::MacAudioOutput::new(),
+                inner: macos::MacAudioOutput::new(cb),
             })
         }
         #[cfg(target_os = "windows")]
         {
             Ok(Self {
                 inner: win::WinAudioOutput::new(cb)?,
-                sender,
-                speech_buf,
             })
         }
-    }
-
-    pub fn is_stopped(&self) -> bool {
-        self.inner.is_stopped()
     }
 
     pub fn start_recording(&self) -> anyhow::Result<()> {
@@ -80,7 +70,6 @@ mod win {
 
     pub struct WinAudioOutput {
         stream: cpal::Stream,
-        is_stopped: Arc<AtomicBool>,
     }
 
     impl WinAudioOutput {
@@ -109,25 +98,17 @@ mod win {
                     )))
                 }
             };
-            Ok(WinAudioOutput {
-                stream,
-                is_stopped: Arc::new(AtomicBool::new(true)),
-            })
-        }
-
-        pub fn is_stopped(&self) -> bool {
-            self.is_stopped.load(Ordering::SeqCst)
+            Ok(WinAudioOutput { stream })
         }
 
         pub fn start_recording(&self) -> anyhow::Result<()> {
             self.stream.play()?;
-            self.is_stopped.store(false, Ordering::SeqCst);
+
             Ok(())
         }
 
         pub fn stop_recording(&self) {
             self.stream.pause();
-            self.is_stopped.store(true, Ordering::SeqCst);
         }
     }
 }
@@ -174,13 +155,15 @@ mod macos {
     };
     use futures::executor::block_on;
 
+    use super::audio_resample;
+
     struct StreamOutputInner {
-        sender: Sender<Option<Retained<cm::SampleBuf>>>,
+        on_data: Box<dyn Fn(Vec<f32>) + Send>,
     }
 
     impl StreamOutputInner {
         fn handle_audio(&mut self, sample_buf: &mut cm::SampleBuf) {
-            let audio_buf_list = sample_buf.unwrap().audio_buf_list::<2>().unwrap();
+            let audio_buf_list = sample_buf.audio_buf_list::<2>().unwrap();
             let buffer_list = audio_buf_list.list();
             let samples = unsafe {
                 let buffer = buffer_list.buffers[0];
@@ -189,12 +172,8 @@ mod macos {
                     buffer.data_bytes_size as usize / std::mem::size_of::<f32>(),
                 )
             };
-            match self.sender.send(Some(samples.clone())) {
-                Ok(_) => {}
-                Err(e) => {
-                    eprintln!("Failed to send sample buffer: {:?}", e);
-                }
-            }
+            let resampled: Vec<f32> = audio_resample(samples, 48000, 16000, 1);
+            (self.on_data)(resampled);
         }
     }
 
@@ -218,42 +197,18 @@ mod macos {
         }
     }
 
-    #[derive(Debug, Clone)]
     pub struct MacAudioOutput {
-        output: Arc<Mutex<Retained<StreamOutput>>>,
-        pub sender: Sender<Option<Vec<f32>>>,
-        stream: Arc<Mutex<Option<Retained<cidre::sc::Stream>>>>,
-        pub stop_signal: Arc<AtomicBool>,
+        output: Retained<StreamOutput>,
+        stream: Retained<cidre::sc::Stream>,
     }
 
     unsafe impl Send for MacAudioOutput {}
     unsafe impl Sync for MacAudioOutput {}
 
     impl MacAudioOutput {
-        pub fn new() -> Self {
-            let (tx, _rx) = broadcast::channel(32);
-            let inner = StreamOutputInner { sender: tx.clone() };
+        pub fn new(on_data: Box<dyn Fn(Vec<f32>) + Send>) -> Self {
+            let inner = StreamOutputInner { on_data };
             let delegate = StreamOutput::with(inner);
-
-            Self {
-                output: Arc::new(Mutex::new(delegate)),
-                sender: tx,
-                stop_signal: Arc::new(AtomicBool::new(true)),
-                stream: Arc::new(Mutex::new(None)),
-            }
-        }
-
-        pub fn is_stopped(&self) -> bool {
-            self.stop_signal.load(Ordering::SeqCst)
-        }
-
-        pub fn start_recording(&self) -> bool {
-            if !self.is_stopped() {
-                log::info!("start_recording: already started");
-                return false;
-            }
-            self.stop_signal.store(false, Ordering::SeqCst);
-            let output = self.output.clone();
             let content = block_on(sc::ShareableContent::current()).unwrap();
             let displays = content.displays().clone();
             let display = displays.first().expect("No display found");
@@ -268,31 +223,23 @@ mod macos {
             cfg.set_excludes_current_process_audio(false);
 
             let stream = sc::Stream::new(&filter, &cfg);
-            *self.stream.try_lock().unwrap() = Some(stream.retained());
-
             stream
-                .add_stream_output(
-                    output.try_lock().unwrap().as_ref(),
-                    sc::OutputType::Audio,
-                    Some(&queue),
-                )
+                .add_stream_output(delegate.as_ref(), sc::OutputType::Audio, Some(&queue))
                 .expect("Failed to add stream output");
+            Self {
+                output: delegate,
+                stream,
+            }
+        }
 
-            block_on(stream.start()).unwrap();
+        pub fn start_recording(&self) -> anyhow::Result<()> {
+            block_on(self.stream.start())?;
             log::info!("stream started");
-            true
+            Ok(())
         }
 
         pub fn stop_recording(&self) {
-            if self.is_stopped() {
-                return;
-            }
-            self.stop_signal.store(true, Ordering::SeqCst);
-            let mut stream = self.stream.try_lock().unwrap();
-            if let Some(stream) = stream.as_mut() {
-                block_on(stream.stop()).expect("Failed to stop stream");
-            }
-            let _ = self.sender.send(None);
+            block_on(self.stream.stop()).unwrap();
         }
     }
 }

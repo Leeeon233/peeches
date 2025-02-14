@@ -201,7 +201,7 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
         settings_window.set_focus().map_err(|e| e.to_string())?;
         Ok(())
     } else {
-        let builder = WebviewWindowBuilder::new(
+        let mut builder = WebviewWindowBuilder::new(
             &app,
             "settings",
             tauri::WebviewUrl::App("/#/settings".into()),
