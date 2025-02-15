@@ -15,7 +15,7 @@
 - 🤖 Fully local AI model
 - 🎵 Lyrics-style text display
 - 🦀 Written in pure Rust
-- 🍎 Currently macOS only
+- 💻 Supports macOS and Windows
 - 🌐 Currently English to Chinese translation only
 
 # Model
