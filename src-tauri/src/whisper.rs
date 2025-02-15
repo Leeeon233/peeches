@@ -41,10 +41,9 @@ impl Whisper {
         params.set_print_timestamps(false);
         params.set_debug_mode(false);
         params.set_language(Some("en"));
-        params.set_duration_ms(3000);
+        // params.set_duration_ms(3000);
         params.set_logprob_thold(-2.0);
-        params.set_temperature(0.2);
-        params.set_suppress_non_speech_tokens(true);
+        params.set_temperature(0.0);
         self.whisper_ctx.full(params, &samples)?;
         let text = self.whisper_ctx.full_get_segment_text_lossy(0)?;
         Ok(text)

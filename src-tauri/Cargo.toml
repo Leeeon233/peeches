@@ -1,6 +1,6 @@
 [package]
 name = "peeches"
-version = "0.1.0"
+version = "0.2.0"
 description = "Real-time system audio whisper and translation"
 authors = ["leon7hao"]
 edition = "2021"

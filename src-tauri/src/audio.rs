@@ -130,6 +130,7 @@ pub fn audio_resample(
     .unwrap_or_default()
 }
 
+#[allow(dead_code)]
 pub fn stereo_to_mono(stereo_data: &[f32]) -> anyhow::Result<Vec<f32>> {
     let mut mono_data = Vec::with_capacity(stereo_data.len() / 2);
 
@@ -198,7 +199,7 @@ mod macos {
     }
 
     pub struct MacAudioOutput {
-        output: Retained<StreamOutput>,
+        _output: Retained<StreamOutput>,
         stream: Retained<cidre::sc::Stream>,
     }
 
@@ -227,7 +228,7 @@ mod macos {
                 .add_stream_output(delegate.as_ref(), sc::OutputType::Audio, Some(&queue))
                 .expect("Failed to add stream output");
             Self {
-                output: delegate,
+                _output: delegate,
                 stream,
             }
         }

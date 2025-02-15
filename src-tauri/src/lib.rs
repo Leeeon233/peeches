@@ -170,6 +170,15 @@ async fn start_recording(
         open_settings(app).await?;
         return Ok(false);
     }
+    app.emit(
+        "event",
+        Event {
+            original_text: "wait for audio".to_string(),
+            translated_text: "等待音频".to_string(),
+        },
+    )
+    .unwrap();
+
     state
         .audio_output
         .lock()
