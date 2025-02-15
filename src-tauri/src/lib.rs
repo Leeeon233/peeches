@@ -167,7 +167,7 @@ async fn start_recording(
 ) -> Result<bool, String> {
     log::info!("start_recording");
     if !state.is_ready() {
-        open_settings(app)?;
+        open_settings(app).await?;
         return Ok(false);
     }
     state
@@ -195,7 +195,7 @@ fn stop_recording(app: AppHandle, state: tauri::State<'_, AppState>) -> Result<(
 }
 
 #[tauri::command]
-fn open_settings(app: AppHandle) -> Result<(), String> {
+async fn open_settings(app: AppHandle) -> Result<(), String> {
     // Check if settings window already exists and focus it
     if let Some(settings_window) = app.get_webview_window("settings") {
         settings_window.set_focus().map_err(|e| e.to_string())?;
@@ -208,6 +208,7 @@ fn open_settings(app: AppHandle) -> Result<(), String> {
         )
         .inner_size(400.0, 300.0)
         .resizable(false)
+        .title("Model Download")
         .center();
 
         #[cfg(target_os = "macos")]
@@ -306,6 +307,11 @@ fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
     let model_dir = app_dir.join("model");
     fs::create_dir_all(&model_dir).map_err(|e| e.to_string())?;
     Ok(model_dir)
+}
+
+#[tauri::command]
+async fn show_main_window(window: tauri::Window) {
+    window.get_window("main").unwrap().show().unwrap();
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -427,7 +433,8 @@ pub fn run() {
             start_recording,
             stop_recording,
             open_settings,
-            download_model
+            download_model,
+            show_main_window
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

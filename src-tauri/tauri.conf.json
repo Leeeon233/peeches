@@ -15,21 +15,22 @@
       {
         "fullscreen": false,
         "resizable": true,
-        "transparent": true, 
+        "transparent": true,
         "alwaysOnTop": true,
         "decorations": false,
-        "acceptFirstMouse": true
+        "acceptFirstMouse": true,
+        "visible": false
       }
     ],
     "security": {
       "capabilities": [
         "default"
       ],
-      "csp": null 
+      "csp": null
     },
     "trayIcon": {
       "iconAsTemplate": false,
-      "iconPath": "./icons/icon-template.png",      
+      "iconPath": "./icons/icon-template.png",
       "id": "tray"
     }
   },
@@ -43,7 +44,7 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources":[
+    "resources": [
       "model/*"
     ]
   }
