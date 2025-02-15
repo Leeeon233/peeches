@@ -1,7 +1,7 @@
 import { useState, useEffect } from "react";
 import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
-import {  Pause, Pin, PinOff, Play, Settings, X } from "lucide-react";
+import { Pause, Pin, PinOff, Play, Settings, X } from "lucide-react";
 
 type Event = {
   originalText: string;
@@ -16,11 +16,11 @@ function Lyrics() {
   const [isRecording, setIsRecording] = useState(false);
 
   useEffect(() => {
+    invoke("show_main_window");
     const unlisten = listen<Event>("event", (event) => {
       const { originalText, translatedText } = event.payload;
       setOriginalText(originalText);
       setTranslatedText(translatedText);
-      
     });
 
     return () => {
@@ -34,14 +34,14 @@ function Lyrics() {
 
   const handleRecording = async () => {
     if (isRecording) {
-       await invoke("stop_recording");
-       setOriginalText("");
-       setTranslatedText("");
-       setIsRecording(false);
+      await invoke("stop_recording");
+      setOriginalText("");
+      setTranslatedText("");
+      setIsRecording(false);
     } else {
-       if (await invoke("start_recording")){
+      if (await invoke("start_recording")) {
         setIsRecording(true);
-       }
+      }
     }
   };
 
@@ -55,27 +55,30 @@ function Lyrics() {
 
   // 计算 CSS 类名
   const textDisplayClasses = [
-    'text-display',
+    "text-display",
     // 只在非固定状态下显示悬停背景
-    !isPinned && isHovered ? 'show-hover-bg' : '',
+    !isPinned && isHovered ? "show-hover-bg" : "",
     // 只在鼠标悬停时显示按钮组
-    isHovered ? 'show-buttons' : ''
-  ].filter(Boolean).join(' ');
+    isHovered ? "show-buttons" : "",
+  ]
+    .filter(Boolean)
+    .join(" ");
 
   return (
-    <div 
+    <div
       className="translation-container"
       // Only allow drag when not pinned
-      {...(!isPinned && { 'data-tauri-drag-region': true })}
+      {...(!isPinned && { "data-tauri-drag-region": true })}
     >
-      <div  
+      <div
         className={textDisplayClasses}
         // Only allow drag when not pinned
-        {...(!isPinned && { 'data-tauri-drag-region': true })}
+        {...(!isPinned && { "data-tauri-drag-region": true })}
         onMouseEnter={handleMouseEnter}
         onMouseLeave={handleMouseLeave}
       >
-        <div className="button-group"
+        <div
+          className="button-group"
           onMouseEnter={(e) => {
             e.stopPropagation();
             setIsHovered(true);
@@ -85,23 +88,23 @@ function Lyrics() {
             setIsHovered(false);
           }}
         >
-          <button 
-            className={`pin-button ${isPinned ? 'active' : ''}`}
+          <button
+            className={`pin-button ${isPinned ? "active" : ""}`}
             onClick={() => {
               handlePin();
             }}
             title={isPinned ? "取消固定" : "固定窗口"}
           >
-            {isPinned ?  <PinOff size={16}/> : <Pin size={16}/>}
+            {isPinned ? <PinOff size={16} /> : <Pin size={16} />}
           </button>
-          <button 
+          <button
             onClick={handleRecording}
             title={isRecording ? "停止录制" : "开始录制"}
-            className={`record-button ${isRecording ? 'recording' : ''}`}
+            className={`record-button ${isRecording ? "recording" : ""}`}
           >
-            {isRecording ?<Pause size={16}/> : <Play size={16} />}
+            {isRecording ? <Pause size={16} /> : <Play size={16} />}
           </button>
-          <button 
+          <button
             onClick={() => {
               invoke("open_settings");
             }}
@@ -109,26 +112,25 @@ function Lyrics() {
           >
             <Settings size={16} />
           </button>
-          <button 
+          <button
             className="close-button"
             onClick={() => {
               invoke("close_app");
             }}
             title="关闭应用"
           >
-           <X size={16} />
+            <X size={16} />
           </button>
-          
         </div>
-        <div 
-          className="original-text" 
-          {...(!isPinned && { 'data-tauri-drag-region': true })}
+        <div
+          className="original-text"
+          {...(!isPinned && { "data-tauri-drag-region": true })}
         >
           {originalText || "等待输入..."}
         </div>
-        <div 
-          className="translated-text" 
-          {...(!isPinned && { 'data-tauri-drag-region': true })}
+        <div
+          className="translated-text"
+          {...(!isPinned && { "data-tauri-drag-region": true })}
         >
           {translatedText || "等待翻译..."}
         </div>
@@ -137,4 +139,4 @@ function Lyrics() {
   );
 }
 
-export default Lyrics; 
+export default Lyrics;
