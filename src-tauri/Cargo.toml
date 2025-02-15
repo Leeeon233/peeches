@@ -37,14 +37,14 @@ tauri-nspanel = { git = "https://github.com/ahkohd/tauri-nspanel", branch = "v2"
 candle-core = { version = "0.8.2", features = ["metal"] }
 candle-transformers = { version = "0.8.2", features = ["metal"] }
 candle-nn = { version = "0.8.2", features = ["metal"] }
-whisper-rs = { version = "0.13.2", features = ["metal"] }
+whisper-rs = { git="https://github.com/Leeeon233/whisper-rs.git", features = ["metal"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 cpal = "^0.15.3"
 candle-core = { version = "0.8.2", features = ["cuda"] }
 candle-transformers = { version = "0.8.2", features = ["cuda"] }
 candle-nn = { version = "0.8.2", features = ["cuda"] }
-whisper-rs = { version = "0.13.2", features = ["cuda"] }
+whisper-rs = { git="https://github.com/Leeeon233/whisper-rs.git",  features = ["cuda"] }
 
 [patch.crates-io]
 esaxx-rs = { git = "https://github.com/thewh1teagle/esaxx-rs.git", branch = "feat/dynamic-msvc-link" }
