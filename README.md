@@ -9,13 +9,15 @@
 <h1 align="center">Peeches  </h1>
 <h3 align="center"> Real-time system audio whisper and translation </h3>
 
+![Image](https://github.com/user-attachments/assets/b5b0692b-bde5-4c3f-8284-7545f0846333)
+
 # Features
 
 - 🎙️ Transcribe system audio in real-time
+- 💻 Supports macOS and Windows
 - 🤖 Fully local AI model
 - 🎵 Lyrics-style text display
 - 🦀 Written in pure Rust
-- 💻 Supports macOS and Windows
 - 🌐 Currently English to Chinese translation only
 
 # Model

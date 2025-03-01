@@ -6217,6 +6217,7 @@ dependencies = [
 [[package]]
 name = "whisper-rs"
 version = "0.13.1"
+source = "git+https://github.com/Leeeon233/whisper-rs.git#78d8ee6bedd1e4e0c0f5259fca31ba61a835fb52"
 dependencies = [
  "whisper-rs-sys",
 ]
@@ -6224,6 +6225,7 @@ dependencies = [
 [[package]]
 name = "whisper-rs-sys"
 version = "0.11.1"
+source = "git+https://github.com/Leeeon233/whisper-rs.git#78d8ee6bedd1e4e0c0f5259fca31ba61a835fb52"
 dependencies = [
  "bindgen 0.69.5",
  "cfg-if",
