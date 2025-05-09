@@ -7,7 +7,7 @@
 </p>
 
 <h1 align="center">Peeches  </h1>
-<h3 align="center"> 实时系统音频耳语和翻译 </h3>
+<h3 align="center"> 实时系统音频转录和翻译 </h3>
 
 <p align="center">
     <a href="./README.md">English</a> | <a href="./README-zh.md">中文</a>
