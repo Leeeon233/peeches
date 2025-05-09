@@ -9,6 +9,10 @@
 <h1 align="center">Peeches  </h1>
 <h3 align="center"> Real-time system audio whisper and translation </h3>
 
+<p align="center">
+    <a href="./README.md">English</a> | <a href="./README-zh.md">中文</a>
+</p>
+
 ![Image](https://github.com/user-attachments/assets/b5b0692b-bde5-4c3f-8284-7545f0846333)
 
 # Features
