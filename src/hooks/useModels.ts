@@ -73,48 +73,17 @@ export function useModels() {
     // Verify models and sync with store
     const verifyAndSyncModels = useCallback(async () => {
         try {
-            // Get verification results from backend
-            const verificationResults = await invoke<Record<string, boolean>>("verify_models");
+            // Call backend to verify and update store
+            await invoke("verify_models");
 
+            // Reload models from store after verification
             const store = await Store.load("models.dat");
-            const storedModels = await store.get<ModelsRecord>("models") || {};
-
-            // Merge with defaultModels to ensure we have all required models
-            const currentModels = { ...defaultModels, ...storedModels };
-            let needsUpdate = false;
-
-            // Check each model and update status if needed
-            for (const [fileName, modelInfo] of Object.entries(currentModels)) {
-                const fileExists = verificationResults[fileName] || false;
-
-                // If model is marked as completed but file doesn't exist, reset status
-                if (modelInfo.status === "completed" && !fileExists) {
-                    currentModels[fileName] = {
-                        ...modelInfo,
-                        status: "idle",
-                        progress: 0,
-                        error: undefined,
-                    };
-                    needsUpdate = true;
-                }
-                // If file exists but model is idle, mark as completed
-                else if (modelInfo.status === "idle" && fileExists) {
-                    currentModels[fileName] = {
-                        ...modelInfo,
-                        status: "completed",
-                        progress: 100,
-                    };
-                    needsUpdate = true;
-                }
+            const value = await store.get<ModelsRecord>("models");
+            if (value) {
+                setModels({ ...defaultModels, ...value });
+            } else {
+                setModels(defaultModels);
             }
-
-            // Update store if needed
-            if (needsUpdate) {
-                await store.set("models", currentModels);
-            }
-
-            // Update state
-            setModels(currentModels);
         } catch (error) {
             console.error("Error verifying models:", error);
             // Fallback to loading from store

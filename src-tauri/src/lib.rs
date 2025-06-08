@@ -323,31 +323,54 @@ async fn show_main_window(window: tauri::Window) {
 }
 
 #[tauri::command]
-async fn verify_models(app: AppHandle) -> Result<HashMap<String, bool>, String> {
+async fn verify_models(app: AppHandle) -> Result<(), String> {
     let model_dir = model_dir(&app)?;
     let store = app.store("models.dat").map_err(|e| e.to_string())?;
     let models = store
         .get("models")
         .unwrap_or(serde_json::Value::Array(vec![]));
-    let models: HashMap<String, ModelInfo> = serde_json::from_value(models).unwrap_or_default();
+    let mut models: HashMap<String, ModelInfo> = serde_json::from_value(models).unwrap_or_default();
 
-    let mut verification_results = HashMap::new();
+    let mut needs_update = false;
 
-    for (file_name, model_info) in models.iter() {
+    for (file_name, model_info) in models.clone().iter() {
         let model_path = model_dir.join(&model_info.file_name);
-        let exists = model_path.exists();
-        verification_results.insert(file_name.clone(), exists);
+        let file_exists = model_path.exists();
 
-        // If model is marked as completed but file doesn't exist, update store
-        if model_info.status == "completed" && !exists {
+        // If model is marked as completed but file doesn't exist, reset status
+        if model_info.status == "completed" && !file_exists {
             log::warn!(
-                "Model {} marked as completed but file doesn't exist",
+                "Model {} marked as completed but file doesn't exist, resetting status",
                 file_name
             );
+            if let Some(model) = models.get_mut(file_name) {
+                model.status = "idle".to_string();
+            }
+            needs_update = true;
+        }
+        // If file exists but model is idle, mark as completed
+        else if model_info.status == "idle" && file_exists {
+            log::info!(
+                "Model {} file exists but status is idle, marking as completed",
+                file_name
+            );
+            if let Some(model) = models.get_mut(file_name) {
+                model.status = "completed".to_string();
+            }
+            needs_update = true;
         }
     }
 
-    Ok(verification_results)
+    // Update store if any changes were made
+    if needs_update {
+        store.set(
+            "models",
+            serde_json::to_value(&models).map_err(|e| e.to_string())?,
+        );
+        log::info!("Models store updated after verification");
+    }
+
+    Ok(())
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
