@@ -76,6 +76,41 @@ export const getModelByFileNameAtom = atom(
     }
 );
 
+// History related types and atoms
+export interface HistoryItem {
+    id: string;
+    originalText: string;
+    translatedText: string;
+    timestamp: number;
+}
+
+// History state atoms
+export const historyAtom = atom<HistoryItem[]>([]);
+export const isHistoryWindowOpenAtom = atomWithStorage<boolean>('isHistoryWindowOpen', false);
+export const isAutoScrollEnabledAtom = atom<boolean>(true);
+
+// History actions
+export const addHistoryItemAtom = atom(
+    null,
+    (get, set, originalText: string, translatedText: string) => {
+        const currentHistory = get(historyAtom);
+        const newItem: HistoryItem = {
+            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+            originalText,
+            translatedText,
+            timestamp: Date.now(),
+        };
+        set(historyAtom, [...currentHistory, newItem]);
+    }
+);
+
+export const clearHistoryAtom = atom(
+    null,
+    (get, set) => {
+        set(historyAtom, []);
+    }
+);
+
 // Model update actions
 export const updateModelAtom = atom(
     null,

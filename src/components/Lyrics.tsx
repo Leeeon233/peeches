@@ -1,5 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
-import { Pause, Pin, PinOff, Play, Settings, X } from "lucide-react";
+import { Pause, Pin, PinOff, Play, Settings, X, History } from "lucide-react";
 import { useLyrics } from "../hooks/useLyrics";
 
 function Lyrics() {
@@ -13,6 +13,7 @@ function Lyrics() {
     handleRecording,
     handleMouseEnter,
     handleMouseLeave,
+    handleHistoryToggle,
     setIsHovered,
   } = useLyrics();
 
@@ -55,6 +56,13 @@ function Lyrics() {
             className={`record-button ${isRecording ? "recording" : ""}`}
           >
             {isRecording ? <Pause size={16} /> : <Play size={16} />}
+          </button>
+          <button
+            onClick={handleHistoryToggle}
+            title="历史记录"
+            className="history-button"
+          >
+            <History size={16} />
           </button>
           <button
             onClick={() => {
