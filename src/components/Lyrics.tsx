@@ -1,68 +1,20 @@
-import { useState, useEffect } from "react";
-import { listen } from "@tauri-apps/api/event";
 import { invoke } from "@tauri-apps/api/core";
 import { Pause, Pin, PinOff, Play, Settings, X } from "lucide-react";
-
-type Event = {
-  originalText: string;
-  translatedText: string;
-};
+import { useLyrics } from "../hooks/useLyrics";
 
 function Lyrics() {
-  const [originalText, setOriginalText] = useState("");
-  const [translatedText, setTranslatedText] = useState("");
-  const [isPinned, setIsPinned] = useState(false);
-  const [isHovered, setIsHovered] = useState(false);
-  const [isRecording, setIsRecording] = useState(false);
-
-  useEffect(() => {
-    invoke("show_main_window");
-    const unlisten = listen<Event>("event", (event) => {
-      const { originalText, translatedText } = event.payload;
-      setOriginalText(originalText);
-      setTranslatedText(translatedText);
-    });
-
-    return () => {
-      unlisten.then((f) => f());
-    };
-  }, []);
-
-  const handlePin = async () => {
-    setIsPinned(!isPinned);
-  };
-
-  const handleRecording = async () => {
-    if (isRecording) {
-      await invoke("stop_recording");
-      setOriginalText("");
-      setTranslatedText("");
-      setIsRecording(false);
-    } else {
-      if (await invoke("start_recording")) {
-        setIsRecording(true);
-      }
-    }
-  };
-
-  const handleMouseEnter = () => {
-    setIsHovered(true);
-  };
-
-  const handleMouseLeave = () => {
-    setIsHovered(false);
-  };
-
-  // 计算 CSS 类名
-  const textDisplayClasses = [
-    "text-display",
-    // 只在非固定状态下显示悬停背景
-    !isPinned && isHovered ? "show-hover-bg" : "",
-    // 只在鼠标悬停时显示按钮组
-    isHovered ? "show-buttons" : "",
-  ]
-    .filter(Boolean)
-    .join(" ");
+  const {
+    originalText,
+    translatedText,
+    isPinned,
+    isRecording,
+    textDisplayClasses,
+    handlePin,
+    handleRecording,
+    handleMouseEnter,
+    handleMouseLeave,
+    setIsHovered,
+  } = useLyrics();
 
   return (
     <div
