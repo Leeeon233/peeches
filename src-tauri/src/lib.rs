@@ -250,7 +250,6 @@ async fn download_model(
 
     if file_path.exists() {
         log::info!("model already exists: {}", file_path.to_str().unwrap());
-        // TODO: check file md5
     } else {
         // Download the file
         let response = reqwest::get(&url).await.map_err(|e| e.to_string())?;
@@ -321,6 +320,34 @@ fn model_dir(app: &AppHandle) -> Result<PathBuf, String> {
 #[tauri::command]
 async fn show_main_window(window: tauri::Window) {
     window.get_window("main").unwrap().show().unwrap();
+}
+
+#[tauri::command]
+async fn verify_models(app: AppHandle) -> Result<HashMap<String, bool>, String> {
+    let model_dir = model_dir(&app)?;
+    let store = app.store("models.dat").map_err(|e| e.to_string())?;
+    let models = store
+        .get("models")
+        .unwrap_or(serde_json::Value::Array(vec![]));
+    let models: HashMap<String, ModelInfo> = serde_json::from_value(models).unwrap_or_default();
+
+    let mut verification_results = HashMap::new();
+
+    for (file_name, model_info) in models.iter() {
+        let model_path = model_dir.join(&model_info.file_name);
+        let exists = model_path.exists();
+        verification_results.insert(file_name.clone(), exists);
+
+        // If model is marked as completed but file doesn't exist, update store
+        if model_info.status == "completed" && !exists {
+            log::warn!(
+                "Model {} marked as completed but file doesn't exist",
+                file_name
+            );
+        }
+    }
+
+    Ok(verification_results)
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -443,7 +470,8 @@ pub fn run() {
             stop_recording,
             open_settings,
             download_model,
-            show_main_window
+            show_main_window,
+            verify_models
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
