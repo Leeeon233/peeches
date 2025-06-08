@@ -1,5 +1,5 @@
 import { useEffect, useCallback } from 'react';
-import { useAtom, useSetAtom } from 'jotai';
+import { useAtom } from 'jotai';
 import { listen } from '@tauri-apps/api/event';
 import { invoke } from '@tauri-apps/api/core';
 import {
@@ -9,6 +9,7 @@ import {
     isHoveredAtom,
     isRecordingAtom,
     textDisplayClassesAtom,
+    isHistoryWindowOpenAtom,
 } from '../store/atoms';
 
 type LyricsEvent = {
@@ -23,6 +24,7 @@ export function useLyrics() {
     const [isHovered, setIsHovered] = useAtom(isHoveredAtom);
     const [isRecording, setIsRecording] = useAtom(isRecordingAtom);
     const [textDisplayClasses] = useAtom(textDisplayClassesAtom);
+    const [isHistoryWindowOpen, setIsHistoryWindowOpen] = useAtom(isHistoryWindowOpenAtom);
 
     // Initialize event listeners
     useEffect(() => {
@@ -58,6 +60,18 @@ export function useLyrics() {
         }
     }, [isRecording, setIsRecording, setOriginalText, setTranslatedText]);
 
+    // Toggle history window
+    const handleHistoryToggle = useCallback(async () => {
+        const newState = !isHistoryWindowOpen;
+        setIsHistoryWindowOpen(newState);
+
+        if (newState) {
+            await invoke("open_history");
+        } else {
+            await invoke("close_history");
+        }
+    }, [isHistoryWindowOpen, setIsHistoryWindowOpen]);
+
     // Mouse events
     const handleMouseEnter = useCallback(() => {
         setIsHovered(true);
@@ -79,6 +93,7 @@ export function useLyrics() {
         // Actions
         handlePin,
         handleRecording,
+        handleHistoryToggle,
         handleMouseEnter,
         handleMouseLeave,
         setIsHovered,

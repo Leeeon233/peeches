@@ -236,6 +236,54 @@ async fn open_settings(app: AppHandle) -> Result<(), String> {
 }
 
 #[tauri::command]
+async fn open_history(app: AppHandle) -> Result<(), String> {
+    // Check if history window already exists and focus it
+    if let Some(history_window) = app.get_webview_window("history") {
+        history_window.set_focus().map_err(|e| e.to_string())?;
+        history_window.show().map_err(|e| e.to_string())?;
+        Ok(())
+    } else {
+        let mut builder =
+            WebviewWindowBuilder::new(&app, "history", tauri::WebviewUrl::App("/#/history".into()))
+                .inner_size(450.0, 700.0)
+                .resizable(true)
+                .transparent(true)
+                .title("历史记录")
+                .always_on_top(true);
+
+        #[cfg(target_os = "macos")]
+        {
+            builder = builder
+                .title_bar_style(tauri::TitleBarStyle::Overlay)
+                .hidden_title(true);
+        }
+
+        // Position the history window above the main window
+        if let Some(main_window) = app.get_webview_window("main") {
+            if let Ok(main_position) = main_window.outer_position() {
+                let history_x = main_position.x;
+                let history_y = main_position.y - 720; // Position above main window
+                builder = builder.position(history_x as f64, history_y as f64);
+            }
+        }
+
+        let history = builder.build();
+        match history {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.to_string()),
+        }
+    }
+}
+
+#[tauri::command]
+async fn close_history(app: AppHandle) -> Result<(), String> {
+    if let Some(history_window) = app.get_webview_window("history") {
+        history_window.hide().map_err(|e| e.to_string())?;
+    }
+    Ok(())
+}
+
+#[tauri::command]
 async fn download_model(
     app: AppHandle,
     url: String,
@@ -492,6 +540,8 @@ pub fn run() {
             start_recording,
             stop_recording,
             open_settings,
+            open_history,
+            close_history,
             download_model,
             show_main_window,
             verify_models
