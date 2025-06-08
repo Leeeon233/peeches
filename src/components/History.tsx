@@ -18,6 +18,7 @@ function History() {
     const [history, setHistory] = useState<HistoryItem[]>([]);
     const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState<boolean>(true);
     const [highlightedIndex, setHighlightedIndex] = useState<number>(-1);
+    const [_, setTranscriptionCounter] = useState<number>(0);
     const containerRef = useRef<HTMLDivElement>(null);
     const itemRefs = useRef<(HTMLDivElement | null)[]>([]);
     const userScrollTimeout = useRef<number | null>(null);
@@ -39,29 +40,42 @@ function History() {
                 translatedText !== "空白";
 
             if (isValidContent) {
-                const newItem: HistoryItem = {
-                    id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
-                    originalText,
-                    translatedText,
-                    timestamp: Date.now(),
-                };
+                setTranscriptionCounter(prev => {
+                    const newCounter = prev + 1;
 
-                setHistory(prev => [...prev, newItem]);
+                    // Only add to history every 6 transcriptions
+                    if (newCounter % 4 === 0) {
+                        const newItem: HistoryItem = {
+                            id: Date.now().toString() + Math.random().toString(36).substr(2, 9),
+                            originalText,
+                            translatedText,
+                            timestamp: Date.now(),
+                        };
 
-                // Auto-scroll and highlight if enabled
-                if (isAutoScrollEnabled) {
-                    setTimeout(() => {
-                        setHighlightedIndex(history.length); // Will be the new item's index
-                        scrollToItem(history.length);
-                    }, 100);
-                }
+                        setHistory(prevHistory => {
+                            const updatedHistory = [...prevHistory, newItem];
+
+                            // Auto-scroll and highlight if enabled
+                            if (isAutoScrollEnabled) {
+                                setTimeout(() => {
+                                    setHighlightedIndex(updatedHistory.length - 1); // Will be the new item's index
+                                    scrollToItem(updatedHistory.length - 1);
+                                }, 100);
+                            }
+
+                            return updatedHistory;
+                        });
+                    }
+
+                    return newCounter;
+                });
             }
         });
 
         return () => {
             unlisten.then((f) => f());
         };
-    }, [history.length, isAutoScrollEnabled]);
+    }, [isAutoScrollEnabled]);
 
     // Scroll to specific item and center it
     const scrollToItem = useCallback((index: number) => {
@@ -112,7 +126,7 @@ function History() {
                 if (history.length > 0) {
                     setHighlightedIndex(history.length - 1);
                 }
-            }, 1000);
+            }, 200);
         }
     }, [isAutoScrollEnabled, setIsAutoScrollEnabled, history.length]);
 
@@ -131,8 +145,9 @@ function History() {
 
     return (
         <div className="history-container">
-            <div className="history-header">
-                <h3>历史记录</h3>
+            <div className="history-header" data-tauri-drag-region>
+                <div className="header-spacer"></div>
+                <h3 style={{ userSelect: 'none' }}>历史记录</h3>
                 <div className="auto-scroll-indicator">
                     <span className={`indicator ${isAutoScrollEnabled ? 'active' : ''}`}>
                         {isAutoScrollEnabled ? '自动跟随' : '手动浏览'}

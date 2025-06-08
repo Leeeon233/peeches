@@ -70,7 +70,7 @@ export const modelValuesAtom = atom((get) => {
 
 export const getModelByFileNameAtom = atom(
     null,
-    (get, set, fileName: string) => {
+    (get, _set, fileName: string) => {
         const models = get(modelsAtom);
         return models[fileName];
     }
@@ -86,7 +86,6 @@ export interface HistoryItem {
 
 // History state atoms
 export const historyAtom = atom<HistoryItem[]>([]);
-export const isHistoryWindowOpenAtom = atomWithStorage<boolean>('isHistoryWindowOpen', false);
 export const isAutoScrollEnabledAtom = atom<boolean>(true);
 
 // History actions
@@ -106,7 +105,7 @@ export const addHistoryItemAtom = atom(
 
 export const clearHistoryAtom = atom(
     null,
-    (get, set) => {
+    (_get, set) => {
         set(historyAtom, []);
     }
 );

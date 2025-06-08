@@ -13,7 +13,7 @@ function Lyrics() {
     handleRecording,
     handleMouseEnter,
     handleMouseLeave,
-    handleHistoryToggle,
+    handleHistoryOpen,
     setIsHovered,
   } = useLyrics();
 
@@ -58,7 +58,7 @@ function Lyrics() {
             {isRecording ? <Pause size={16} /> : <Play size={16} />}
           </button>
           <button
-            onClick={handleHistoryToggle}
+            onClick={handleHistoryOpen}
             title="历史记录"
             className="history-button"
           >
